@@ -156,7 +156,7 @@ public class AdminAppointmentController {
         // Validar que fromDate <= toDate si ambas están presentes
         if (fromDateParsed != null && toDateParsed != null && fromDateParsed.isAfter(toDateParsed)) {
             throw new ApiException(
-                "La fecha 'dateFrom' no puede ser posterior a 'dateTo'",
+                "La fecha 'Desde' no puede ser posterior a 'Hasta'",
                 HttpStatus.BAD_REQUEST);
         }
 
