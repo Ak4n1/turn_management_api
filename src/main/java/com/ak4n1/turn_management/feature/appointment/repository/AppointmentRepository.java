@@ -184,19 +184,30 @@ public interface AppointmentRepository extends JpaRepository<Appointment, Long> 
      * @param state Estado opcional (null para todos)
      * @param fromDate Fecha desde opcional (null para sin límite)
      * @param toDate Fecha hasta opcional (null para sin límite)
+     * @param daysOfWeek Lista de días de la semana opcional (null para todos, 1=Lunes, 7=Domingo)
+     * @param daysOfWeekCount Cantidad de días de la semana seleccionados (0 si no hay filtro)
      * @param pageable Paginación
      * @return Página de turnos del usuario
      */
-    @Query("SELECT a FROM Appointment a WHERE a.userId = :userId " +
+    @Query(value = "SELECT * FROM appointments a WHERE a.user_id = :userId " +
            "AND (:state IS NULL OR a.state = :state) " +
-           "AND (:fromDate IS NULL OR a.appointmentDate >= :fromDate) " +
-           "AND (:toDate IS NULL OR a.appointmentDate <= :toDate) " +
-           "ORDER BY a.appointmentDate ASC, a.startTime ASC")
+           "AND (:fromDate IS NULL OR a.appointment_date >= :fromDate) " +
+           "AND (:toDate IS NULL OR a.appointment_date <= :toDate) " +
+           "AND (:daysOfWeekCount = 0 OR a.day_of_week IN (:daysOfWeek)) " +
+           "ORDER BY a.appointment_date ASC, a.start_time ASC",
+           countQuery = "SELECT COUNT(*) FROM appointments a WHERE a.user_id = :userId " +
+           "AND (:state IS NULL OR a.state = :state) " +
+           "AND (:fromDate IS NULL OR a.appointment_date >= :fromDate) " +
+           "AND (:toDate IS NULL OR a.appointment_date <= :toDate) " +
+           "AND (:daysOfWeekCount = 0 OR a.day_of_week IN (:daysOfWeek))",
+           nativeQuery = true)
     Page<Appointment> findByUserIdWithFilters(
             @Param("userId") Long userId,
-            @Param("state") AppointmentState state,
+            @Param("state") String state,
             @Param("fromDate") LocalDate fromDate,
             @Param("toDate") LocalDate toDate,
+            @Param("daysOfWeek") java.util.List<Integer> daysOfWeek,
+            @Param("daysOfWeekCount") int daysOfWeekCount,
             Pageable pageable);
 
     /**

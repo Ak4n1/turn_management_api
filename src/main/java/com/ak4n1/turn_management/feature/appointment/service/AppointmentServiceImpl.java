@@ -416,11 +416,10 @@ public class AppointmentServiceImpl implements AppointmentService {
      * Usa lock pesimista para evitar condiciones de carrera.
      */
     private void validateSlotAvailability(LocalDate date, LocalTime startTime, Integer durationMinutes) {
-        // Estados que ocupan un slot (no incluye EXPIRED ni CANCELLED)
+        // Estados que ocupan un slot (RESCHEDULED no ocupa: el turno ya fue movido a otro horario)
         List<AppointmentState> occupyingStates = List.of(
             AppointmentState.CREATED,
-            AppointmentState.CONFIRMED,
-            AppointmentState.RESCHEDULED
+            AppointmentState.CONFIRMED
         );
 
         // Buscar turnos que ocupan el slot con lock pesimista
@@ -636,11 +635,10 @@ public class AppointmentServiceImpl implements AppointmentService {
                     HttpStatus.CONFLICT);
             }
 
-            // Validar que no haya otro turno confirmado o creado en el mismo slot
+            // Validar que no haya otro turno confirmado o creado en el mismo slot (RESCHEDULED no ocupa)
             List<AppointmentState> occupyingStates = List.of(
                 AppointmentState.CREATED,
-                AppointmentState.CONFIRMED,
-                AppointmentState.RESCHEDULED
+                AppointmentState.CONFIRMED
             );
 
             List<Appointment> conflictingAppointments = appointmentRepository
@@ -1779,13 +1777,14 @@ public class AppointmentServiceImpl implements AppointmentService {
             AppointmentState status,
             java.time.LocalDate fromDate,
             java.time.LocalDate toDate,
+            java.util.List<Integer> daysOfWeek,
             Boolean upcoming,
             Boolean past,
             int page,
             int size) {
         
-        logger.info("Consultando turnos del usuario - ID: {}, Estado: {}, Desde: {}, Hasta: {}, Upcoming: {}, Past: {}, Página: {}, Tamaño: {}",
-            userId, status, fromDate, toDate, upcoming, past, page, size);
+        logger.info("Consultando turnos del usuario - ID: {}, Estado: {}, Desde: {}, Hasta: {}, Días: {}, Upcoming: {}, Past: {}, Página: {}, Tamaño: {}",
+            userId, status, fromDate, toDate, daysOfWeek, upcoming, past, page, size);
 
         // 1. Validar que upcoming y past no sean ambos true
         if (Boolean.TRUE.equals(upcoming) && Boolean.TRUE.equals(past)) {
@@ -1833,15 +1832,17 @@ public class AppointmentServiceImpl implements AppointmentService {
             }
         }
 
-        // 6. Crear Pageable con ordenamiento por fecha y hora ascendente
-        Pageable pageable = PageRequest.of(page, size, Sort.by(
-            Sort.Order.asc("appointmentDate"),
-            Sort.Order.asc("startTime")
-        ));
+        // 6. Crear Pageable sin Sort ya que el ordenamiento está en la query nativa
+        // El ORDER BY ya está definido en la query SQL con nombres de columna (appointment_date, start_time)
+        Pageable pageable = PageRequest.of(page, size, Sort.unsorted());
 
         // 7. Buscar turnos con filtros
+        List<Integer> daysOfWeekParam = (daysOfWeek != null && !daysOfWeek.isEmpty()) ? daysOfWeek : null;
+        int daysOfWeekCount = (daysOfWeekParam != null) ? daysOfWeekParam.size() : 0;
+        String stateStr = (status != null) ? status.name() : null;
+        
         Page<Appointment> appointmentPage = appointmentRepository.findByUserIdWithFilters(
-            userId, status, adjustedFromDate, adjustedToDate, pageable);
+            userId, stateStr, adjustedFromDate, adjustedToDate, daysOfWeekParam, daysOfWeekCount, pageable);
 
         // 8. Si upcoming=true, filtrar en memoria para incluir solo turnos que aún no pasaron
         List<Appointment> filteredAppointments = appointmentPage.getContent();
@@ -2217,9 +2218,7 @@ public class AppointmentServiceImpl implements AppointmentService {
         // Enviar fecha con zona horaria local (GMT-3) para evitar problemas de interpretación en el frontend
         // Formato: "2026-02-09T00:00:00-03:00" (con zona horaria explícita)
         // Esto asegura que todos los clientes (web, móvil, etc.) interpreten la fecha correctamente
-        ZoneId gmtMinus3 = ZoneId.of("America/Argentina/Buenos_Aires");
-        ZonedDateTime dateWithTimezone = appointment.getAppointmentDate().atStartOfDay().atZone(gmtMinus3);
-        response.setDate(dateWithTimezone.format(DateTimeFormatter.ISO_OFFSET_DATE_TIME));
+        response.setDate(appointment.getAppointmentDate().toString());
         response.setStartTime(appointment.getStartTime().format(DateTimeFormatter.ofPattern("HH:mm")));
         response.setEndTime(appointment.getEndTime().format(DateTimeFormatter.ofPattern("HH:mm")));
         response.setDurationMinutes(appointment.getDurationMinutes());

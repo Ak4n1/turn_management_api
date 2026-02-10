@@ -10,11 +10,15 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.authentication.LockedException;
 import org.springframework.validation.FieldError;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+
+import com.fasterxml.jackson.databind.exc.InvalidFormatException;
+import com.fasterxml.jackson.databind.exc.ValueInstantiationException;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -134,6 +138,63 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(MethodArgumentTypeMismatchException.class)
     public ResponseEntity<ErrorResponse> handleMethodArgumentTypeMismatchException(MethodArgumentTypeMismatchException ex, HttpServletRequest request) {
         String message = String.format("El parámetro '%s' tiene un formato inválido. Formato esperado: YYYY-MM-DD para fechas", ex.getName());
+        ErrorResponse errorResponse = new ErrorResponse(
+                HttpStatus.BAD_REQUEST.value(),
+                HttpStatus.BAD_REQUEST.getReasonPhrase(),
+                message,
+                request.getRequestURI()
+        );
+        return new ResponseEntity<>(errorResponse, HttpStatus.BAD_REQUEST);
+    }
+
+    /**
+     * Maneja errores de deserialización de Jackson (formato inválido en JSON).
+     * Convierte errores de parsing de fechas/horas en HTTP 400 en lugar de 500.
+     */
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    public ResponseEntity<ErrorResponse> handleHttpMessageNotReadableException(HttpMessageNotReadableException ex, HttpServletRequest request) {
+        String message = "Formato de datos inválido en la solicitud";
+        
+        // Intentar extraer información más específica del error
+        Throwable cause = ex.getCause();
+        if (cause instanceof InvalidFormatException) {
+            InvalidFormatException ife = (InvalidFormatException) cause;
+            String fieldName = ife.getPath().stream()
+                    .map(ref -> ref.getFieldName())
+                    .reduce((first, second) -> second)
+                    .orElse("campo");
+            
+            // Detectar tipo de campo (fecha, hora, etc.)
+            Class<?> targetType = ife.getTargetType();
+            if (targetType != null) {
+                String typeName = targetType.getSimpleName();
+                if (typeName.equals("LocalDate")) {
+                    message = String.format("El formato de fecha en '%s' es inválido. Formato esperado: YYYY-MM-DD", fieldName);
+                } else if (typeName.equals("LocalTime")) {
+                    message = String.format("El formato de hora en '%s' es inválido. Formato esperado: HH:mm (24 horas)", fieldName);
+                } else {
+                    message = String.format("El formato del campo '%s' es inválido. Tipo esperado: %s", fieldName, typeName);
+                }
+            }
+        } else if (cause instanceof ValueInstantiationException) {
+            ValueInstantiationException vie = (ValueInstantiationException) cause;
+            String fieldName = vie.getPath().stream()
+                    .map(ref -> ref.getFieldName())
+                    .reduce((first, second) -> second)
+                    .orElse("campo");
+            message = String.format("El valor del campo '%s' no es válido", fieldName);
+        } else if (cause != null && cause.getMessage() != null) {
+            // Intentar extraer información útil del mensaje
+            String causeMessage = cause.getMessage();
+            if (causeMessage.contains("LocalDate")) {
+                message = "El formato de fecha es inválido. Formato esperado: YYYY-MM-DD";
+            } else if (causeMessage.contains("LocalTime")) {
+                message = "El formato de hora es inválido. Formato esperado: HH:mm (24 horas)";
+            } else {
+                message = "Formato de datos inválido: " + causeMessage;
+            }
+        }
+        
         ErrorResponse errorResponse = new ErrorResponse(
                 HttpStatus.BAD_REQUEST.value(),
                 HttpStatus.BAD_REQUEST.getReasonPhrase(),

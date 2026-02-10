@@ -347,6 +347,7 @@ public class AppointmentController {
      * @param status Filtro opcional por estado (CREATED, CONFIRMED, CANCELLED, etc.)
      * @param fromDate Filtro opcional por fecha desde (formato: yyyy-MM-dd)
      * @param toDate Filtro opcional por fecha hasta (formato: yyyy-MM-dd)
+     * @param daysOfWeek Filtro opcional por días de la semana (formato: 1,2,3 donde 1=Lunes, 7=Domingo)
      * @param upcoming Filtro opcional para solo turnos futuros (boolean, mutuamente excluyente con past)
      * @param past Filtro opcional para solo turnos pasados (boolean, mutuamente excluyente con upcoming)
      * @param page Número de página (default: 0)
@@ -360,6 +361,7 @@ public class AppointmentController {
             @RequestParam(required = false) String status,
             @RequestParam(required = false) String fromDate,
             @RequestParam(required = false) String toDate,
+            @RequestParam(required = false) String daysOfWeek,
             @RequestParam(required = false) Boolean upcoming,
             @RequestParam(required = false) Boolean past,
             @RequestParam(defaultValue = "0") int page,
@@ -368,8 +370,8 @@ public class AppointmentController {
         
         Long userId = getCurrentUserId(httpRequest);
 
-        logger.info("Consultando turnos del usuario - ID: {}, Estado: {}, Desde: {}, Hasta: {}, Upcoming: {}, Past: {}, Página: {}, Tamaño: {}",
-            userId, status, fromDate, toDate, upcoming, past, page, size);
+        logger.info("Consultando turnos del usuario - ID: {}, Estado: {}, Desde: {}, Hasta: {}, Días: {}, Upcoming: {}, Past: {}, Página: {}, Tamaño: {}",
+            userId, status, fromDate, toDate, daysOfWeek, upcoming, past, page, size);
 
         // Parsear estado si se proporcionó
         AppointmentState appointmentState = null;
@@ -407,9 +409,30 @@ public class AppointmentController {
             }
         }
 
+        // Parsear días de la semana si se proporcionó
+        java.util.List<Integer> daysOfWeekList = null;
+        if (daysOfWeek != null && !daysOfWeek.isBlank()) {
+            try {
+                daysOfWeekList = java.util.Arrays.stream(daysOfWeek.split(","))
+                    .map(String::trim)
+                    .map(Integer::parseInt)
+                    .filter(day -> day >= 1 && day <= 7)
+                    .collect(java.util.stream.Collectors.toList());
+                if (daysOfWeekList.isEmpty()) {
+                    throw new com.ak4n1.turn_management.shared.exception.ApiException(
+                        "Formato inválido en 'daysOfWeek'. Formato esperado: 1,2,3 (donde 1=Lunes, 7=Domingo)",
+                        org.springframework.http.HttpStatus.BAD_REQUEST);
+                }
+            } catch (NumberFormatException e) {
+                throw new com.ak4n1.turn_management.shared.exception.ApiException(
+                    "Formato inválido en 'daysOfWeek'. Formato esperado: 1,2,3 (donde 1=Lunes, 7=Domingo)",
+                    org.springframework.http.HttpStatus.BAD_REQUEST);
+            }
+        }
+
         // Llamar al servicio
         MyAppointmentsResponse response = appointmentService.getMyAppointments(
-            userId, appointmentState, fromDateParsed, toDateParsed, upcoming, past, page, size);
+            userId, appointmentState, fromDateParsed, toDateParsed, daysOfWeekList, upcoming, past, page, size);
 
         logger.info("Turnos encontrados - Total: {}, Página: {}, Tamaño: {}, Total páginas: {}",
             response.getTotal(), response.getPage(), response.getSize(), response.getTotalPages());

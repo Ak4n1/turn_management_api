@@ -8,6 +8,11 @@ import com.ak4n1.turn_management.feature.configuration.dto.response.ManualBlockR
 import com.ak4n1.turn_management.feature.configuration.mapper.CalendarConfigurationMapper;
 import com.ak4n1.turn_management.feature.configuration.repository.ManualBlockRepository;
 import com.ak4n1.turn_management.feature.appointment.repository.AppointmentRepository;
+import com.ak4n1.turn_management.feature.appointment.dto.response.UserAffectedAppointmentInfo;
+import com.ak4n1.turn_management.feature.configuration.service.cancellation.AppointmentCancellationService;
+import com.ak4n1.turn_management.feature.auth.domain.User;
+import com.ak4n1.turn_management.feature.auth.repository.UserRepository;
+import com.ak4n1.turn_management.feature.notification.service.EmailService;
 import com.ak4n1.turn_management.feature.notification.service.WebSocketNotificationService;
 import com.ak4n1.turn_management.feature.notification.domain.NotificationType;
 import com.ak4n1.turn_management.feature.notification.domain.RelatedEntityType;
@@ -50,15 +55,24 @@ public class ManualBlockServiceImpl implements ManualBlockService {
     private final CalendarConfigurationMapper mapper;
     private final AppointmentRepository appointmentRepository;
     private final WebSocketNotificationService webSocketNotificationService;
+    private final AppointmentCancellationService appointmentCancellationService;
+    private final EmailService emailService;
+    private final UserRepository userRepository;
 
     public ManualBlockServiceImpl(ManualBlockRepository repository,
                                  CalendarConfigurationMapper mapper,
                                  AppointmentRepository appointmentRepository,
-                                 WebSocketNotificationService webSocketNotificationService) {
+                                 WebSocketNotificationService webSocketNotificationService,
+                                 AppointmentCancellationService appointmentCancellationService,
+                                 EmailService emailService,
+                                 UserRepository userRepository) {
         this.repository = repository;
         this.mapper = mapper;
         this.appointmentRepository = appointmentRepository;
         this.webSocketNotificationService = webSocketNotificationService;
+        this.appointmentCancellationService = appointmentCancellationService;
+        this.emailService = emailService;
+        this.userRepository = userRepository;
     }
 
     @Override
@@ -114,53 +128,140 @@ public class ManualBlockServiceImpl implements ManualBlockService {
                 saved.getId()
             );
 
-            // Notificar a usuarios con turnos afectados
-            if (!affectedAppointments.isEmpty()) {
-                List<com.ak4n1.turn_management.feature.appointment.domain.AppointmentState> activeStates = 
-                    List.of(
-                        com.ak4n1.turn_management.feature.appointment.domain.AppointmentState.CREATED,
-                        com.ak4n1.turn_management.feature.appointment.domain.AppointmentState.CONFIRMED
-                    );
-                
-                List<com.ak4n1.turn_management.feature.appointment.domain.Appointment> affectedAppointmentsList = 
-                    appointmentRepository.findByDateAndStateIn(saved.getBlockDate(), activeStates);
-                
-                // Filtrar solo los que están en el rango bloqueado (si es bloqueo parcial)
-                if (!saved.getIsFullDay() && saved.getTimeRange() != null) {
-                    try {
-                        java.time.LocalTime blockStart = java.time.LocalTime.parse(saved.getTimeRange().getStart(), 
-                            java.time.format.DateTimeFormatter.ofPattern("HH:mm"));
-                        java.time.LocalTime blockEnd = java.time.LocalTime.parse(saved.getTimeRange().getEnd(), 
-                            java.time.format.DateTimeFormatter.ofPattern("HH:mm"));
-                        
-                        affectedAppointmentsList = affectedAppointmentsList.stream()
-                            .filter(a -> {
-                                java.time.LocalTime appointmentStart = a.getStartTime();
-                                return !appointmentStart.isBefore(blockStart) && appointmentStart.isBefore(blockEnd);
-                            })
-                            .collect(java.util.stream.Collectors.toList());
-                    } catch (Exception e) {
-                        logger.warn("Error al filtrar turnos por rango horario: {}", e.getMessage());
+            // Notificar por WebSocket a usuarios con turnos afectados (si no se procesan por cancelar/notificar con email)
+            java.util.List<Long> idsToProcess = request.getAppointmentIdsToCancel();
+            if (idsToProcess == null || idsToProcess.isEmpty()) {
+                if (!affectedAppointments.isEmpty()) {
+                    List<com.ak4n1.turn_management.feature.appointment.domain.AppointmentState> activeStates =
+                            List.of(
+                                    com.ak4n1.turn_management.feature.appointment.domain.AppointmentState.CREATED,
+                                    com.ak4n1.turn_management.feature.appointment.domain.AppointmentState.CONFIRMED
+                            );
+                    List<com.ak4n1.turn_management.feature.appointment.domain.Appointment> affectedAppointmentsList =
+                            appointmentRepository.findByDateAndStateIn(saved.getBlockDate(), activeStates);
+                    if (!saved.getIsFullDay() && saved.getTimeRange() != null) {
+                        try {
+                            java.time.LocalTime blockStart = java.time.LocalTime.parse(saved.getTimeRange().getStart(),
+                                    java.time.format.DateTimeFormatter.ofPattern("HH:mm"));
+                            java.time.LocalTime blockEnd = java.time.LocalTime.parse(saved.getTimeRange().getEnd(),
+                                    java.time.format.DateTimeFormatter.ofPattern("HH:mm"));
+                            affectedAppointmentsList = affectedAppointmentsList.stream()
+                                    .filter(a -> {
+                                        java.time.LocalTime appointmentStart = a.getStartTime();
+                                        return !appointmentStart.isBefore(blockStart) && appointmentStart.isBefore(blockEnd);
+                                    })
+                                    .collect(java.util.stream.Collectors.toList());
+                        } catch (Exception ex) {
+                            logger.warn("Error al filtrar turnos por rango horario: {}", ex.getMessage());
+                        }
                     }
-                }
-                
-                for (var appointment : affectedAppointmentsList) {
-                    webSocketNotificationService.sendNotificationToUser(
-                        appointment.getUserId(),
-                        NotificationType.BLOCK_CREATED,
-                        "Bloqueo Operativo - Turno Afectado",
-                        String.format("Se ha creado un bloqueo operativo para el %s que afecta tu turno del %s a las %s. Por favor, contacta con el administrador.",
-                            saved.getBlockDate(),
-                            appointment.getAppointmentDate(),
-                            appointment.getStartTime()),
-                        RelatedEntityType.APPOINTMENT,
-                        appointment.getId(),
-                        appointment.getId()
-                    );
+                    for (var appointment : affectedAppointmentsList) {
+                        webSocketNotificationService.sendNotificationToUser(
+                                appointment.getUserId(),
+                                NotificationType.BLOCK_CREATED,
+                                "Bloqueo Operativo - Turno Afectado",
+                                String.format("Se ha creado un bloqueo operativo para el %s que afecta tu turno del %s a las %s. Por favor, contacta con el administrador.",
+                                        saved.getBlockDate(), appointment.getAppointmentDate(), appointment.getStartTime()),
+                                RelatedEntityType.APPOINTMENT,
+                                appointment.getId(),
+                                appointment.getId()
+                        );
+                    }
                 }
             }
         } catch (Exception e) {
             logger.error("Error al enviar notificaciones WebSocket de bloqueo: {}", e.getMessage(), e);
+        }
+
+        // Procesar turnos afectados: cancelar o solo notificar por email (igual que reglas de atención)
+        try {
+            java.util.List<Long> appointmentIdsToCancel = request.getAppointmentIdsToCancel();
+            Boolean autoCancel = Boolean.TRUE.equals(request.getAutoCancelAffectedAppointments());
+            String cancellationReason = request.getCancellationReason();
+            if (cancellationReason == null || cancellationReason.trim().isEmpty()) {
+                cancellationReason = "Bloqueo operativo programado";
+            }
+            if (appointmentIdsToCancel == null || appointmentIdsToCancel.isEmpty()) {
+                return toResponse(saved, affectedAppointments);
+            }
+            logger.info("Procesando {} turno(s) afectados por bloqueo - AutoCancel: {}", appointmentIdsToCancel.size(), autoCancel);
+            List<com.ak4n1.turn_management.feature.appointment.domain.Appointment> affectedAppointmentsList = appointmentRepository
+                    .findAllById(appointmentIdsToCancel)
+                    .stream()
+                    .filter(a -> a.getState() == com.ak4n1.turn_management.feature.appointment.domain.AppointmentState.CREATED
+                            || a.getState() == com.ak4n1.turn_management.feature.appointment.domain.AppointmentState.CONFIRMED)
+                    .collect(java.util.stream.Collectors.toList());
+            if (affectedAppointmentsList.isEmpty()) {
+                return toResponse(saved, affectedAppointments);
+            }
+            java.util.Map<Long, java.util.List<UserAffectedAppointmentInfo>> userAffectedAppointments = new java.util.HashMap<>();
+            java.util.List<com.ak4n1.turn_management.feature.appointment.domain.Appointment> appointmentsToCancel = new java.util.ArrayList<>();
+            for (com.ak4n1.turn_management.feature.appointment.domain.Appointment appointment : affectedAppointmentsList) {
+                Long affectedUserId = appointment.getUserId();
+                userAffectedAppointments.computeIfAbsent(affectedUserId, k -> new java.util.ArrayList<>())
+                        .add(new UserAffectedAppointmentInfo(
+                                appointment.getId(),
+                                appointment.getAppointmentDate(),
+                                appointment.getStartTime().toString(),
+                                appointment.getEndTime().toString()));
+                if (autoCancel) {
+                    appointmentsToCancel.add(appointment);
+                }
+            }
+            if (autoCancel && !appointmentsToCancel.isEmpty()) {
+                appointmentCancellationService.cancelAffectedAppointmentsByDayClosure(appointmentsToCancel, userId, cancellationReason);
+            }
+            java.util.Set<Long> affectedUserIds = userAffectedAppointments.keySet();
+            java.util.Map<Long, User> usersMap = new java.util.HashMap<>();
+            if (!affectedUserIds.isEmpty()) {
+                List<User> affectedUsers = userRepository.findAllById(affectedUserIds);
+                for (User user : affectedUsers) {
+                    usersMap.put(user.getId(), user);
+                }
+            }
+            for (java.util.Map.Entry<Long, java.util.List<UserAffectedAppointmentInfo>> entry : userAffectedAppointments.entrySet()) {
+                try {
+                    Long affectedUserId = entry.getKey();
+                    java.util.List<UserAffectedAppointmentInfo> appointments = entry.getValue();
+                    User affectedUser = usersMap.get(affectedUserId);
+                    if (affectedUser == null) {
+                        continue;
+                    }
+                    if (autoCancel) {
+                        emailService.sendMassCancellationEmail(affectedUser, appointments, cancellationReason);
+                        String message = appointments.size() == 1
+                                ? String.format("Tu turno para el %s a las %s ha sido cancelado. Motivo: %s. Por favor, vuelva a solicitar un turno.",
+                                        appointments.get(0).getDate(), appointments.get(0).getStartTime(), cancellationReason)
+                                : String.format("Tus %d turno(s) han sido cancelados. Motivo: %s. Por favor, vuelva a solicitar turnos.", appointments.size(), cancellationReason);
+                        webSocketNotificationService.sendNotificationToUser(
+                                affectedUser.getId(),
+                                NotificationType.APPOINTMENT_CANCELLED_BY_ADMIN,
+                                appointments.size() == 1 ? "Turno Cancelado" : "Turnos Cancelados",
+                                message,
+                                RelatedEntityType.APPOINTMENT,
+                                appointments.get(0).getAppointmentId(),
+                                appointments.get(0).getAppointmentId());
+                    } else {
+                        emailService.sendDaysClosedNotificationEmail(affectedUser, appointments);
+                        String message = appointments.size() == 1
+                                ? String.format("Se ha creado un bloqueo operativo para el %s que afecta tu turno a las %s. Tu turno sigue vigente por ahora; si necesitas reprogramar, contacta al administrador.",
+                                        saved.getBlockDate(), appointments.get(0).getStartTime())
+                                : String.format("Se ha creado un bloqueo operativo que afecta %d de tus turnos. Siguen vigentes; si necesitas reprogramar, contacta al administrador.", appointments.size());
+                        webSocketNotificationService.sendNotificationToUser(
+                                affectedUser.getId(),
+                                NotificationType.BLOCK_CREATED,
+                                "Bloqueo - Turno(s) Afectado(s)",
+                                message,
+                                RelatedEntityType.APPOINTMENT,
+                                appointments.get(0).getAppointmentId(),
+                                appointments.get(0).getAppointmentId());
+                    }
+                } catch (Exception e) {
+                    logger.error("Error al enviar notificación/email por bloqueo - Usuario ID: {}, Error: {}", entry.getKey(), e.getMessage(), e);
+                }
+            }
+        } catch (Exception e) {
+            logger.error("Error al procesar turnos afectados por bloqueo: {}", e.getMessage(), e);
         }
 
         // 10. Enviar actualización de disponibilidad en tiempo real para la fecha afectada - Tiempo Real
@@ -173,6 +274,71 @@ public class ManualBlockServiceImpl implements ManualBlockService {
 
         // 11. Convertir a response
         return toResponse(saved, affectedAppointments);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<ManualBlockResponse> getActiveBlocks() {
+        List<ManualBlock> blocks = repository.findByActiveTrue();
+        if (blocks == null) {
+            return List.of();
+        }
+        return blocks.stream()
+            .map(b -> toResponse(b, List.of()))
+            .collect(Collectors.toList());
+    }
+
+    @Override
+    @Transactional
+    public ManualBlockResponse updateBlock(Long id, ManualBlockRequest request, Long userId) {
+        ManualBlock block = repository.findById(id)
+            .orElseThrow(() -> new ApiException("Bloqueo no encontrado", HttpStatus.NOT_FOUND));
+        if (!Boolean.TRUE.equals(block.getActive())) {
+            throw new ApiException("No se puede editar un bloqueo eliminado", HttpStatus.BAD_REQUEST);
+        }
+        validateManualBlockRequest(request);
+        validateDateNotInPast(request.getDate());
+        validateIsFullDayAndTimeRange(request);
+        if (!request.getIsFullDay() && request.getTimeRange() != null) {
+            validateTimeRange(request.getTimeRange());
+        }
+        List<ManualBlockResponse.AffectedAppointmentInfo> affectedAppointments = detectAffectedAppointments(request);
+        if (!request.getAffectsExistingAppointments() && !affectedAppointments.isEmpty()) {
+            throw new ApiException(
+                "Existen turnos en el rango bloqueado. Debe resolverlos primero o establecer 'affectsExistingAppointments' en true.",
+                HttpStatus.CONFLICT);
+        }
+        block.setBlockDate(request.getDate());
+        block.setIsFullDay(request.getIsFullDay());
+        block.setReason(request.getReason());
+        block.setAffectsExistingAppointments(request.getAffectsExistingAppointments());
+        if (request.getIsFullDay()) {
+            block.setTimeRange(null);
+        } else if (request.getTimeRange() != null) {
+            block.setTimeRange(mapper.toTimeRange(request.getTimeRange()));
+        }
+        ManualBlock saved = repository.save(block);
+        try {
+            webSocketNotificationService.broadcastAvailabilityUpdate(saved.getBlockDate());
+        } catch (Exception e) {
+            logger.error("Error al enviar actualización de disponibilidad WebSocket - Fecha: {}", saved.getBlockDate(), e);
+        }
+        return toResponse(saved, affectedAppointments);
+    }
+
+    @Override
+    @Transactional
+    public void deactivateBlock(Long id) {
+        ManualBlock block = repository.findById(id)
+            .orElseThrow(() -> new ApiException("Bloqueo no encontrado", HttpStatus.NOT_FOUND));
+        LocalDate blockDate = block.getBlockDate();
+        repository.delete(block);
+        try {
+            webSocketNotificationService.broadcastAvailabilityUpdate(blockDate);
+        } catch (Exception e) {
+            logger.error("Error al enviar actualización de disponibilidad WebSocket - Fecha: {}", blockDate, e);
+        }
+        logger.info("Bloqueo eliminado - ID: {}", id);
     }
 
     /**
@@ -351,22 +517,26 @@ public class ManualBlockServiceImpl implements ManualBlockService {
 
     /**
      * Convierte entidad ManualBlock a ManualBlockResponse.
+     * Null-safe para evitar NPE con datos legacy o inconsistentes.
      */
     private ManualBlockResponse toResponse(ManualBlock block, List<ManualBlockResponse.AffectedAppointmentInfo> affectedAppointments) {
+        if (block == null) {
+            return null;
+        }
         ManualBlockResponse response = new ManualBlockResponse();
         response.setId(block.getId());
         response.setBlockDate(block.getBlockDate());
-        response.setIsFullDay(block.getIsFullDay());
-        response.setReason(block.getReason());
-        response.setActive(block.getActive());
-        response.setAffectsExistingAppointments(block.getAffectsExistingAppointments());
+        response.setIsFullDay(block.getIsFullDay() != null ? block.getIsFullDay() : true);
+        response.setReason(block.getReason() != null ? block.getReason() : "");
+        response.setActive(block.getActive() != null ? block.getActive() : true);
+        response.setAffectsExistingAppointments(block.getAffectsExistingAppointments() != null ? block.getAffectsExistingAppointments() : false);
         response.setCreatedByUserId(block.getCreatedByUserId());
         response.setCreatedAt(block.getCreatedAt());
         response.setUpdatedAt(block.getUpdatedAt());
-        response.setAffectedAppointments(affectedAppointments);
+        response.setAffectedAppointments(affectedAppointments != null ? affectedAppointments : List.of());
 
-        // Convertir timeRange si existe
-        if (block.getTimeRange() != null) {
+        // Convertir timeRange solo si existe y es bloqueo parcial (evita embeddable con columnas null)
+        if (Boolean.FALSE.equals(block.getIsFullDay()) && block.getTimeRange() != null) {
             response.setTimeRange(mapper.toTimeRangeResponse(block.getTimeRange()));
         }
 

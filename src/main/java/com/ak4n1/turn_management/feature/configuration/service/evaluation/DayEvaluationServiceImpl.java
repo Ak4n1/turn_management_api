@@ -32,16 +32,17 @@ public class DayEvaluationServiceImpl implements DayEvaluationService {
     private final CalendarConfigurationMapper mapper;
 
     public DayEvaluationServiceImpl(AppointmentRepository appointmentRepository,
-                                   CalendarConfigurationMapper mapper) {
+            CalendarConfigurationMapper mapper) {
         this.appointmentRepository = appointmentRepository;
         this.mapper = mapper;
     }
 
     @Override
     public ConsolidatedDayResponse evaluateDay(LocalDate date, CalendarConfiguration config,
-                                              List<CalendarException> exceptions,
-                                              List<ManualBlock> blocks) {
-        // 0. Si la fecha es pasada, siempre retornar CLOSED (días pasados no son relevantes para gestión futura)
+            List<CalendarException> exceptions,
+            List<ManualBlock> blocks) {
+        // 0. Si la fecha es pasada, siempre retornar CLOSED (días pasados no son
+        // relevantes para gestión futura)
         LocalDate today = DateUtils.getTodayGMT3();
         if (date.isBefore(today)) {
             ConsolidatedDayResponse pastDay = new ConsolidatedDayResponse();
@@ -198,43 +199,26 @@ public class DayEvaluationServiceImpl implements DayEvaluationService {
                         .collect(Collectors.toList());
 
                 day.setTimeRanges(timeRanges);
-                day.setState(timeRanges.isEmpty() ? "CLOSED" : "OPEN");
+                day.setState("OPEN");
                 String dayName = DayNameUtils.getDayName(dayOfWeekNumber);
                 day.setRuleDescription(String.format("%s - Abierto",
                         DayNameUtils.capitalizeFirst(dayName)));
             } else {
                 // Día abierto en configuración semanal pero sin horarios diarios configurados
-                // Si tiene turnos existentes, mantenerlo como OPEN (estaba abierto cuando se
-                // crearon los turnos)
-                // Si no tiene turnos, marcarlo como CLOSED (no se pueden crear nuevos turnos
-                // sin horarios)
+                day.setState("OPEN");
+                day.setTimeRanges(new ArrayList<>());
+                String dayName = DayNameUtils.getDayName(dayOfWeekNumber);
+
                 if (Boolean.TRUE.equals(hasAppointments) && appointmentsCount != null && appointmentsCount > 0) {
-                    // Tiene turnos existentes - mantener como OPEN para indicar que el día está
-                    // operativo
-                    day.setState("OPEN");
-                    String dayName = DayNameUtils.getDayName(dayOfWeekNumber);
                     day.setRuleDescription(
-                            String.format("%s - Abierto (sin horarios configurados, pero con turnos existentes)",
+                            String.format("%s - Abierto (sin horarios configurados, pero con turnos activos)",
                                     DayNameUtils.capitalizeFirst(dayName)));
-                    day.setTimeRanges(new ArrayList<>());
                 } else {
-                    // Sin turnos y sin horarios - cerrado
-                    day.setState("CLOSED");
-                    String dayName = DayNameUtils.getDayName(dayOfWeekNumber);
-                    day.setRuleDescription(String.format("%s - Cerrado",
+                    day.setRuleDescription(String.format("%s - Abierto (Falta configurar horarios)",
                             DayNameUtils.capitalizeFirst(dayName)));
-                    day.setTimeRanges(new ArrayList<>());
                 }
             }
 
-            day.setHasExistingAppointments(hasAppointments);
-            day.setAppointmentsCount(appointmentsCount);
-        }
-
-        // Si el día está cerrado, también calcular turnos existentes
-        if ("CLOSED".equals(day.getState())) {
-            Boolean hasAppointments = hasExistingAppointments(date);
-            Integer appointmentsCount = countExistingAppointments(date);
             day.setHasExistingAppointments(hasAppointments);
             day.setAppointmentsCount(appointmentsCount);
         }
@@ -244,7 +228,8 @@ public class DayEvaluationServiceImpl implements DayEvaluationService {
 
     @Override
     public Boolean hasExistingAppointments(LocalDate date) {
-        // Si la fecha es pasada, no hay turnos "existentes" relevantes para el calendario
+        // Si la fecha es pasada, no hay turnos "existentes" relevantes para el
+        // calendario
         LocalDate today = DateUtils.getTodayGMT3();
         if (date.isBefore(today)) {
             return false;
@@ -260,7 +245,8 @@ public class DayEvaluationServiceImpl implements DayEvaluationService {
 
     @Override
     public Integer countExistingAppointments(LocalDate date) {
-        // Si la fecha es pasada, no hay turnos "existentes" relevantes para el calendario
+        // Si la fecha es pasada, no hay turnos "existentes" relevantes para el
+        // calendario
         LocalDate today = DateUtils.getTodayGMT3();
         if (date.isBefore(today)) {
             return 0;

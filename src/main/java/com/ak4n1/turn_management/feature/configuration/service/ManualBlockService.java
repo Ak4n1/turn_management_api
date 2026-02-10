@@ -3,6 +3,8 @@ package com.ak4n1.turn_management.feature.configuration.service;
 import com.ak4n1.turn_management.feature.configuration.dto.request.ManualBlockRequest;
 import com.ak4n1.turn_management.feature.configuration.dto.response.ManualBlockResponse;
 
+import java.util.List;
+
 /**
  * Servicio para gestión de bloqueos operativos del calendario.
  * Los bloqueos operativos tienen prioridad máxima sobre todas las reglas.
@@ -27,5 +29,29 @@ public interface ManualBlockService {
      * @throws IllegalArgumentException si el bloqueo es inválido
      */
     ManualBlockResponse createBlock(ManualBlockRequest request, Long userId);
+
+    /**
+     * Obtiene todos los bloqueos activos.
+     *
+     * @return Lista de bloqueos activos
+     */
+    List<ManualBlockResponse> getActiveBlocks();
+
+    /**
+     * Actualiza un bloqueo existente por ID.
+     *
+     * @param id ID del bloqueo
+     * @param request DTO con los datos actualizados
+     * @param userId ID del usuario que realiza la actualización
+     * @return Bloqueo actualizado
+     */
+    ManualBlockResponse updateBlock(Long id, ManualBlockRequest request, Long userId);
+
+    /**
+     * Desactiva un bloqueo (eliminación lógica).
+     *
+     * @param id ID del bloqueo
+     */
+    void deactivateBlock(Long id);
 }
 

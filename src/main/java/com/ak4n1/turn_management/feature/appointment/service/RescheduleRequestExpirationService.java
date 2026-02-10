@@ -179,12 +179,10 @@ public class RescheduleRequestExpirationService {
                 return false; // Fuera de horarios
             }
 
-            // Verificar si el slot está ocupado por otro turno
-            // Estados que ocupan un slot (no incluye EXPIRED ni CANCELLED)
+            // Verificar si el slot está ocupado por otro turno (RESCHEDULED no ocupa)
             List<AppointmentState> occupyingStates = List.of(
                 AppointmentState.CREATED,
-                AppointmentState.CONFIRMED,
-                AppointmentState.RESCHEDULED
+                AppointmentState.CONFIRMED
             );
 
             // Buscar turnos que ocupan el slot exacto (misma fecha y hora de inicio)

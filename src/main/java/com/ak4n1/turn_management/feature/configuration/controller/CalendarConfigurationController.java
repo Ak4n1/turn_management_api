@@ -32,6 +32,7 @@ import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDate;
+import java.util.List;
 
 /**
  * Controller para gestión de configuraciones de calendario.
@@ -222,8 +223,72 @@ public class CalendarConfigurationController {
     }
 
     /**
-     * Crea un bloqueo operativo del calendario.
+     * Obtiene todas las excepciones activas del calendario.
      * 
+     * GET /api/admin/calendar/exceptions
+     * 
+     * Requiere: Rol ADMIN
+     * 
+     * @return Lista de excepciones activas ordenadas por fecha (200 OK)
+     */
+    @GetMapping("/exceptions")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<List<CalendarExceptionResponse>> getAllActiveExceptions() {
+        logger.info("Solicitud de obtención de excepciones activas");
+        
+        List<CalendarExceptionResponse> exceptions = exceptionService.getAllActiveExceptions();
+        
+        logger.info("Se retornan {} excepciones activas", exceptions.size());
+        return ResponseEntity.ok(exceptions);
+    }
+
+    /**
+     * Actualiza una excepción existente.
+     * PUT /api/admin/calendar/exceptions/{id}
+     */
+    @PutMapping("/exceptions/{id}")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<CalendarExceptionResponse> updateException(
+            @PathVariable Long id,
+            @Valid @RequestBody CalendarExceptionRequest request,
+            HttpServletRequest httpRequest) {
+        logger.info("Solicitud de actualización de excepción - ID: {}", id);
+        Long userId = getCurrentUserId(httpRequest);
+        CalendarExceptionResponse response = exceptionService.updateException(id, request, userId);
+        return ResponseEntity.ok(response);
+    }
+
+    /**
+     * Elimina (desactiva) una excepción.
+     * DELETE /api/admin/calendar/exceptions/{id}
+     */
+    @DeleteMapping("/exceptions/{id}")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<Void> deleteException(@PathVariable Long id) {
+        logger.info("Solicitud de eliminación de excepción - ID: {}", id);
+        exceptionService.deactivateException(id);
+        return ResponseEntity.noContent().build();
+    }
+
+    /**
+     * Obtiene todos los bloqueos activos.
+     *
+     * GET /api/admin/calendar/blocks
+     *
+     * Requiere: Rol ADMIN
+     */
+    @GetMapping("/blocks")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<List<ManualBlockResponse>> getActiveBlocks() {
+        logger.info("Solicitud de obtención de bloqueos activos");
+        List<ManualBlockResponse> blocks = manualBlockService.getActiveBlocks();
+        logger.info("Se retornan {} bloqueos activos", blocks.size());
+        return ResponseEntity.ok(blocks);
+    }
+
+    /**
+     * Crea un bloqueo operativo del calendario.
+     *
      * POST /api/admin/calendar/blocks
      * 
      * Requiere: Rol ADMIN
@@ -270,6 +335,49 @@ public class CalendarConfigurationController {
             response.getAffectedAppointments() != null ? response.getAffectedAppointments().size() : 0);
         
         return ResponseEntity.status(HttpStatus.CREATED).body(response);
+    }
+
+    /**
+     * Actualiza un bloqueo operativo existente.
+     *
+     * PUT /api/admin/calendar/blocks/{id}
+     *
+     * Requiere: Rol ADMIN
+     *
+     * @param id ID del bloqueo
+     * @param request DTO con los datos actualizados
+     * @param httpRequest Request HTTP para obtener el token
+     * @return Bloqueo actualizado (200 OK)
+     */
+    @PutMapping("/blocks/{id}")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<ManualBlockResponse> updateBlock(
+            @PathVariable Long id,
+            @Valid @RequestBody ManualBlockRequest request,
+            HttpServletRequest httpRequest) {
+        logger.info("Solicitud de actualización de bloqueo - ID: {}, Fecha: {}", id, request.getDate());
+        Long userId = getCurrentUserId(httpRequest);
+        ManualBlockResponse response = manualBlockService.updateBlock(id, request, userId);
+        logger.info("Bloqueo actualizado exitosamente - ID: {}", id);
+        return ResponseEntity.ok(response);
+    }
+
+    /**
+     * Elimina (desactiva) un bloqueo operativo.
+     *
+     * DELETE /api/admin/calendar/blocks/{id}
+     *
+     * Requiere: Rol ADMIN
+     *
+     * @param id ID del bloqueo
+     * @return 204 No Content
+     */
+    @DeleteMapping("/blocks/{id}")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<Void> deleteBlock(@PathVariable Long id) {
+        logger.info("Solicitud de eliminación de bloqueo - ID: {}", id);
+        manualBlockService.deactivateBlock(id);
+        return ResponseEntity.noContent().build();
     }
 
     /**

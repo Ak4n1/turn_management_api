@@ -50,6 +50,25 @@ public class CalendarExceptionRequest {
     @Size(min = 10, max = 500, message = "El motivo debe tener entre 10 y 500 caracteres")
     private String reason;
 
+    /**
+     * Si es true, cancela automáticamente los turnos afectados cuando se cierra un día o se reducen horarios.
+     * Por defecto es false (solo notifica).
+     */
+    private Boolean autoCancelAffectedAppointments = false;
+
+    /**
+     * Razón personalizable para la cancelación de turnos afectados.
+     * Solo se usa si autoCancelAffectedAppointments es true.
+     */
+    private String cancellationReason;
+
+    /**
+     * IDs de turnos a cancelar directamente (opcional).
+     * Si se proporciona, se cancelan solo estos turnos sin recalcular.
+     * Si no se proporciona, se calculan los turnos afectados automáticamente.
+     */
+    private java.util.List<Long> appointmentIdsToCancel;
+
     public CalendarExceptionRequest() {
     }
 
@@ -90,6 +109,30 @@ public class CalendarExceptionRequest {
 
     public void setReason(String reason) {
         this.reason = reason;
+    }
+
+    public Boolean getAutoCancelAffectedAppointments() {
+        return autoCancelAffectedAppointments;
+    }
+
+    public void setAutoCancelAffectedAppointments(Boolean autoCancelAffectedAppointments) {
+        this.autoCancelAffectedAppointments = autoCancelAffectedAppointments;
+    }
+
+    public String getCancellationReason() {
+        return cancellationReason;
+    }
+
+    public void setCancellationReason(String cancellationReason) {
+        this.cancellationReason = cancellationReason;
+    }
+
+    public java.util.List<Long> getAppointmentIdsToCancel() {
+        return appointmentIdsToCancel;
+    }
+
+    public void setAppointmentIdsToCancel(java.util.List<Long> appointmentIdsToCancel) {
+        this.appointmentIdsToCancel = appointmentIdsToCancel;
     }
 }
 

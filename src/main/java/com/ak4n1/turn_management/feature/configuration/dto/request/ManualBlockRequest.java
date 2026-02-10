@@ -53,6 +53,25 @@ public class ManualBlockRequest {
     @NotNull(message = "El campo affectsExistingAppointments es obligatorio")
     private Boolean affectsExistingAppointments;
 
+    /**
+     * Si es true, se cancelan automáticamente los turnos afectados y se envía email de cancelación.
+     * Si es false, solo se notifica por email (sin cancelar).
+     * Solo se usa cuando se envían appointmentIdsToCancel (tras preview de impacto).
+     */
+    private Boolean autoCancelAffectedAppointments;
+
+    /**
+     * Motivo de cancelación para los turnos afectados.
+     * Solo se usa si autoCancelAffectedAppointments es true.
+     */
+    private String cancellationReason;
+
+    /**
+     * IDs de turnos a cancelar o notificar (del preview de impacto).
+     * Si se envía, se procesan según autoCancelAffectedAppointments.
+     */
+    private java.util.List<Long> appointmentIdsToCancel;
+
     public ManualBlockRequest() {
     }
 
@@ -103,6 +122,30 @@ public class ManualBlockRequest {
 
     public void setAffectsExistingAppointments(Boolean affectsExistingAppointments) {
         this.affectsExistingAppointments = affectsExistingAppointments;
+    }
+
+    public Boolean getAutoCancelAffectedAppointments() {
+        return autoCancelAffectedAppointments;
+    }
+
+    public void setAutoCancelAffectedAppointments(Boolean autoCancelAffectedAppointments) {
+        this.autoCancelAffectedAppointments = autoCancelAffectedAppointments;
+    }
+
+    public String getCancellationReason() {
+        return cancellationReason;
+    }
+
+    public void setCancellationReason(String cancellationReason) {
+        this.cancellationReason = cancellationReason;
+    }
+
+    public java.util.List<Long> getAppointmentIdsToCancel() {
+        return appointmentIdsToCancel;
+    }
+
+    public void setAppointmentIdsToCancel(java.util.List<Long> appointmentIdsToCancel) {
+        this.appointmentIdsToCancel = appointmentIdsToCancel;
     }
 }
 

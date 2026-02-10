@@ -28,6 +28,12 @@ public interface CalendarExceptionRepository extends JpaRepository<CalendarExcep
     boolean existsByExceptionDate(LocalDate date);
 
     /**
+     * Verifica si existe otra excepción (distinta a la indicada) para la fecha.
+     * Útil para validar unicidad al actualizar.
+     */
+    boolean existsByExceptionDateAndIdNot(LocalDate date, Long id);
+
+    /**
      * Busca todas las excepciones activas.
      * 
      * @return Lista de excepciones activas

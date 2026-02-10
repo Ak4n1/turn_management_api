@@ -31,6 +31,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.DayOfWeek;
 import java.time.LocalDate;
+import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -514,20 +515,60 @@ public class ImpactCalculationServiceImpl implements ImpactCalculationService {
             if (Boolean.FALSE.equals(proposedException.getIsOpen())) {
                 affectedDays = 1;
                 slotsLost = currentSlots;
+                // Todos los turnos del día están afectados
+                affectedAppointments = calculateAffectedAppointments(exceptionDate, exceptionDate);
             } else if (Boolean.TRUE.equals(proposedException.getIsOpen())) {
-                // Si la excepción abre con diferentes horarios, calcular diferencia
+                // Si la excepción abre un día que ya estaba abierto, pero con diferentes
+                // horarios,
+                // calcular diferencia precisa.
+                // Los turnos afectados son los que están FUERA de los nuevos rangos.
                 affectedDays = 1;
-                // Por simplicidad, asumimos que se pierden algunos slots si cambian los rangos
-                slotsLost = currentSlots / 2; // Estimación
+
+                // Calcular slots propuestos
+                int proposedSlots = 0;
+                List<TimeRange> proposedRanges = new ArrayList<>();
+                if (proposedException.getTimeRanges() != null && !proposedException.getTimeRanges().isEmpty()
+                        && currentDuration != null) {
+                    proposedRanges = proposedException.getTimeRanges().stream()
+                            .map(tr -> new TimeRange(tr.getStart(), tr.getEnd()))
+                            .collect(Collectors.toList());
+                    proposedSlots = countSlotsForDay(proposedRanges, currentDuration);
+                }
+
+                // Los slots perdidos son la diferencia (puede ser negativa si se gana
+                // capacidad, limitamos a 0)
+                slotsLost = Math.max(0, currentSlots - proposedSlots);
+
+                // Los turnos afectados son los que están FUERA de los nuevos rangos horarios.
+                // Si movemos un rango, los turnos que estaban en el rango viejo pero no en el
+                // nuevo se cancelan.
+                List<AffectedAppointmentInfo> allAppointments = calculateAffectedAppointments(exceptionDate,
+                        exceptionDate);
+                if (!proposedRanges.isEmpty()) {
+                    affectedAppointments = filterAppointmentsOutsideTimeRanges(allAppointments, proposedRanges);
+                } else {
+                    // Si el día está "abierto" pero sin rangos (abierto de palabra pero sin slots),
+                    // todos los turnos previos se ven afectados.
+                    affectedAppointments = allAppointments;
+                }
             }
         } else if ("CLOSED".equals(currentDay.getState()) &&
                 Boolean.TRUE.equals(proposedException.getIsOpen())) {
-            // Si el día está cerrado y la excepción lo abre, no hay slots perdidos
+            // Si el día está cerrado y la excepción lo abre (ej. un sábado):
+            // 1. Es una adición de disponibilidad.
+            // 2. Slots perdidos = 0.
+            // 3. Turnos afectados = 0 (no se pueden pedir turnos en días cerrados).
             affectedDays = 1;
             slotsLost = 0;
+            affectedAppointments = new ArrayList<>();
+        } else if ("CLOSED".equals(currentDay.getState()) &&
+                Boolean.FALSE.equals(proposedException.getIsOpen())) {
+            // El día ya está cerrado y se mantiene cerrado
+            // Verificar si hay turnos que deberían considerarse (casos especiales)
+            affectedDays = 1;
+            slotsLost = 0;
+            affectedAppointments = calculateAffectedAppointments(exceptionDate, exceptionDate);
         }
-
-        affectedAppointments = calculateAffectedAppointments(exceptionDate, exceptionDate);
 
         String changeDescription = String.format(
                 "Nueva excepción: %s (%s)",
@@ -607,6 +648,23 @@ public class ImpactCalculationServiceImpl implements ImpactCalculationService {
         }
 
         affectedAppointments = calculateAffectedAppointments(blockDate, blockDate);
+
+        // Si es bloqueo parcial, filtrar solo turnos que caen dentro del rango horario
+        if (Boolean.FALSE.equals(proposedBlock.getIsFullDay()) && proposedBlock.getTimeRange() != null) {
+            try {
+                LocalTime blockStart = LocalTime.parse(proposedBlock.getTimeRange().getStart(),
+                        java.time.format.DateTimeFormatter.ofPattern("HH:mm"));
+                LocalTime blockEnd = LocalTime.parse(proposedBlock.getTimeRange().getEnd(),
+                        java.time.format.DateTimeFormatter.ofPattern("HH:mm"));
+                affectedAppointments = affectedAppointments.stream()
+                        .filter(a -> a.getTime() != null
+                                && !a.getTime().isBefore(blockStart)
+                                && a.getTime().isBefore(blockEnd))
+                        .collect(Collectors.toList());
+            } catch (Exception e) {
+                logger.warn("Error al filtrar turnos por rango del bloqueo: {}", e.getMessage());
+            }
+        }
 
         String changeDescription = String.format(
                 "Nuevo bloqueo operativo: %s (%s)",
@@ -772,6 +830,74 @@ public class ImpactCalculationServiceImpl implements ImpactCalculationService {
                                 a.getAppointmentDate(),
                                 a.getStartTime());
                     }
+                })
+                .collect(Collectors.toList());
+    }
+
+    /**
+     * Filtra turnos que están fuera de los rangos horarios proporcionados.
+     * 
+     * Un turno está fuera si su hora de inicio no está dentro de ninguno de los
+     * rangos.
+     * 
+     * @param appointments Lista de turnos a filtrar
+     * @param timeRanges   Lista de rangos horarios válidos
+     * @return Lista de turnos que NO están dentro de ningún rango horario
+     */
+    /**
+     * Filtra los turnos que están DENTRO de los rangos horarios especificados.
+     * Se usa cuando una excepción está "abierta" con rangos, lo que significa que
+     * el día
+     * está CERRADO en esos rangos, por lo tanto los turnos afectados son los que
+     * están dentro.
+     */
+    /**
+     * Filtra los turnos que están FUERA de los rangos horarios especificados.
+     * Se usa cuando una excepción está "abierta" con nuevos rangos; los turnos que
+     * no caigan
+     * en estos nuevos rangos deben ser cancelados.
+     */
+    private List<AffectedAppointmentInfo> filterAppointmentsOutsideTimeRanges(
+            List<AffectedAppointmentInfo> appointments,
+            List<TimeRange> timeRanges) {
+
+        if (appointments == null || appointments.isEmpty()) {
+            return new ArrayList<>();
+        }
+
+        if (timeRanges == null || timeRanges.isEmpty()) {
+            // Si no hay rangos definidos en una excepción "abierta", todos los turnos están
+            // "fuera"
+            return appointments;
+        }
+
+        return appointments.stream()
+                .filter(appointment -> {
+                    LocalTime appointmentStart = appointment.getTime();
+                    if (appointmentStart == null) {
+                        return true;
+                    }
+
+                    // Verificar si el turno está dentro de alguno de los rangos
+                    boolean isInsideAnyRange = timeRanges.stream()
+                            .anyMatch(range -> {
+                                try {
+                                    LocalTime rangeStart = range.getStartAsLocalTime();
+                                    LocalTime rangeEnd = range.getEndAsLocalTime();
+
+                                    if (rangeStart == null || rangeEnd == null) {
+                                        return false;
+                                    }
+
+                                    return (appointmentStart.equals(rangeStart) || appointmentStart.isAfter(rangeStart))
+                                            && appointmentStart.isBefore(rangeEnd);
+                                } catch (Exception e) {
+                                    return false;
+                                }
+                            });
+
+                    // Retornar true si NO está dentro de ningún rango (está afectado)
+                    return !isInsideAnyRange;
                 })
                 .collect(Collectors.toList());
     }

@@ -243,6 +243,7 @@ public interface AppointmentService {
      * @param status Filtro opcional por estado
      * @param fromDate Filtro opcional por fecha desde (formato: yyyy-MM-dd)
      * @param toDate Filtro opcional por fecha hasta (formato: yyyy-MM-dd)
+     * @param daysOfWeek Filtro opcional por días de la semana (1=Lunes, 7=Domingo)
      * @param upcoming Filtro opcional para solo turnos futuros (mutuamente excluyente con past)
      * @param past Filtro opcional para solo turnos pasados (mutuamente excluyente con upcoming)
      * @param page Número de página (default: 0)
@@ -254,6 +255,7 @@ public interface AppointmentService {
             AppointmentState status,
             java.time.LocalDate fromDate,
             java.time.LocalDate toDate,
+            java.util.List<Integer> daysOfWeek,
             Boolean upcoming,
             Boolean past,
             int page,

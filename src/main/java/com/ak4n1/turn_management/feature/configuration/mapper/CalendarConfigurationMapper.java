@@ -8,7 +8,9 @@ import com.ak4n1.turn_management.feature.configuration.dto.request.DailyHoursCon
 import com.ak4n1.turn_management.feature.configuration.dto.request.DailyHoursRequest;
 import com.ak4n1.turn_management.feature.configuration.dto.request.TimeRangeRequest;
 import com.ak4n1.turn_management.feature.configuration.dto.request.WeeklyConfigRequest;
+import com.ak4n1.turn_management.feature.configuration.domain.CalendarException;
 import com.ak4n1.turn_management.feature.configuration.dto.response.CalendarConfigurationResponse;
+import com.ak4n1.turn_management.feature.configuration.dto.response.CalendarExceptionResponse;
 import com.ak4n1.turn_management.feature.configuration.dto.response.DailyHoursResponse;
 import com.ak4n1.turn_management.feature.configuration.dto.response.TimeRangeResponse;
 import com.ak4n1.turn_management.feature.configuration.dto.response.WeeklyConfigResponse;
@@ -31,14 +33,13 @@ public class CalendarConfigurationMapper {
             return null;
         }
         return new WeeklyConfig(
-            request.getMonday(),
-            request.getTuesday(),
-            request.getWednesday(),
-            request.getThursday(),
-            request.getFriday(),
-            request.getSaturday(),
-            request.getSunday()
-        );
+                request.getMonday(),
+                request.getTuesday(),
+                request.getWednesday(),
+                request.getThursday(),
+                request.getFriday(),
+                request.getSaturday(),
+                request.getSunday());
     }
 
     /**
@@ -49,14 +50,13 @@ public class CalendarConfigurationMapper {
             return null;
         }
         return new WeeklyConfigResponse(
-            weeklyConfig.getMonday(),
-            weeklyConfig.getTuesday(),
-            weeklyConfig.getWednesday(),
-            weeklyConfig.getThursday(),
-            weeklyConfig.getFriday(),
-            weeklyConfig.getSaturday(),
-            weeklyConfig.getSunday()
-        );
+                weeklyConfig.getMonday(),
+                weeklyConfig.getTuesday(),
+                weeklyConfig.getWednesday(),
+                weeklyConfig.getThursday(),
+                weeklyConfig.getFriday(),
+                weeklyConfig.getSaturday(),
+                weeklyConfig.getSunday());
     }
 
     /**
@@ -76,14 +76,14 @@ public class CalendarConfigurationMapper {
         response.setNotes(configuration.getNotes());
         response.setCreatedAt(configuration.getCreatedAt());
         response.setUpdatedAt(configuration.getUpdatedAt());
-        
+
         // Mapear horarios diarios
         if (configuration.getDailyHours() != null) {
             response.setDailyHours(configuration.getDailyHours().stream()
-                .map(this::toDailyHoursResponse)
-                .collect(Collectors.toList()));
+                    .map(this::toDailyHoursResponse)
+                    .collect(Collectors.toList()));
         }
-        
+
         return response;
     }
 
@@ -115,14 +115,14 @@ public class CalendarConfigurationMapper {
             return null;
         }
         DailyHours dailyHours = new DailyHours(request.getDayOfWeek());
-        
+
         if (request.getTimeRanges() != null) {
             List<TimeRange> timeRanges = request.getTimeRanges().stream()
-                .map(this::toTimeRange)
-                .collect(Collectors.toList());
+                    .map(this::toTimeRange)
+                    .collect(Collectors.toList());
             dailyHours.setTimeRanges(timeRanges);
         }
-        
+
         return dailyHours;
     }
 
@@ -135,20 +135,22 @@ public class CalendarConfigurationMapper {
         }
         DailyHoursResponse response = new DailyHoursResponse();
         response.setDayOfWeek(dailyHours.getDayOfWeek());
-        
+
         if (dailyHours.getTimeRanges() != null) {
             response.setTimeRanges(dailyHours.getTimeRanges().stream()
-                .map(this::toTimeRangeResponse)
-                .collect(Collectors.toList()));
+                    .map(this::toTimeRangeResponse)
+                    .collect(Collectors.toList()));
         }
-        
+
         return response;
     }
 
     /**
-     * Convierte DailyHoursConfigRequest (Map con días como strings) a List de DailyHours.
+     * Convierte DailyHoursConfigRequest (Map con días como strings) a List de
+     * DailyHours.
      * 
-     * El Map tiene claves como "monday", "tuesday", etc. que se convierten a números 1-7.
+     * El Map tiene claves como "monday", "tuesday", etc. que se convierten a
+     * números 1-7.
      * 
      * @param request DTO con el Map de días
      * @return Lista de DailyHours
@@ -185,8 +187,8 @@ public class CalendarConfigurationMapper {
 
             DailyHours dailyHours = new DailyHours(dayOfWeek);
             List<TimeRange> timeRanges = timeRangeRequests.stream()
-                .map(this::toTimeRange)
-                .collect(Collectors.toList());
+                    .map(this::toTimeRange)
+                    .collect(Collectors.toList());
             dailyHours.setTimeRanges(timeRanges);
 
             dailyHoursList.add(dailyHours);
@@ -194,5 +196,31 @@ public class CalendarConfigurationMapper {
 
         return dailyHoursList;
     }
-}
 
+    /**
+     * Convierte CalendarException (entidad) a CalendarExceptionResponse.
+     */
+    public CalendarExceptionResponse toExceptionResponse(CalendarException exception, Integer affectedCount) {
+        if (exception == null) {
+            return null;
+        }
+        CalendarExceptionResponse response = new CalendarExceptionResponse();
+        response.setId(exception.getId());
+        response.setExceptionDate(exception.getExceptionDate());
+        response.setIsOpen(exception.getIsOpen());
+        response.setReason(exception.getReason());
+        response.setActive(exception.getActive());
+        response.setCreatedByUserId(exception.getCreatedByUserId());
+        response.setCreatedAt(exception.getCreatedAt());
+        response.setUpdatedAt(exception.getUpdatedAt());
+        response.setAffectedAppointmentsCount(affectedCount);
+
+        if (exception.getTimeRanges() != null) {
+            response.setTimeRanges(exception.getTimeRanges().stream()
+                    .map(this::toTimeRangeResponse)
+                    .collect(Collectors.toList()));
+        }
+
+        return response;
+    }
+}
