@@ -14,6 +14,8 @@ import org.springframework.web.socket.handler.TextWebSocketHandler;
 import java.io.IOException;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -54,6 +56,8 @@ public class AppointmentWebSocketHandler extends TextWebSocketHandler {
 
     // Scheduler para heartbeat y cleanup
     private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(2);
+    // Executor para broadcast en paralelo (evitar bloquear con muchos clientes)
+    private final ExecutorService broadcastExecutor = Executors.newFixedThreadPool(4);
 
     public AppointmentWebSocketHandler(WebSocketSecurityValidator securityValidator,
                                       ObjectMapper objectMapper) {
@@ -64,6 +68,7 @@ public class AppointmentWebSocketHandler extends TextWebSocketHandler {
         startHeartbeat();
         startIdleTimeoutChecker();
         startCleanupTask();
+        logger.info("WebSocket handler iniciado. Escalado horizontal: configurar sticky sessions en el load balancer.");
     }
 
     @Override
@@ -213,29 +218,46 @@ public class AppointmentWebSocketHandler extends TextWebSocketHandler {
      */
     public void broadcastMessage(WebSocketMessage message) {
         logger.info("📢 [WebSocket] Broadcasting message to all {} active sessions", activeSessions.size());
-        
-        int successCount = 0;
-        List<String> failedSessions = new ArrayList<>();
-        
-        for (Map.Entry<String, WebSocketSession> entry : activeSessions.entrySet()) {
-            String sessionId = entry.getKey();
-            WebSocketSession wsSession = entry.getValue();
-            
-            if (wsSession != null && wsSession.isOpen()) {
-                try {
-                    String json = objectMapper.writeValueAsString(message);
-                    wsSession.sendMessage(new TextMessage(json));
-                    successCount++;
-                } catch (Exception e) {
-                    logger.error("Error broadcasting to session {}: {}", sessionId, e.getMessage());
-                    failedSessions.add(sessionId);
-                }
-            } else {
-                failedSessions.add(sessionId);
-            }
+        String json;
+        try {
+            json = objectMapper.writeValueAsString(message);
+        } catch (Exception e) {
+            logger.error("Error serializing broadcast message: {}", e.getMessage());
+            return;
         }
-        
-        // Limpiar sesiones fallidas
+        final String payload = json;
+        List<String> sessionIds = new ArrayList<>(activeSessions.keySet());
+        java.util.concurrent.atomic.AtomicInteger successCount = new java.util.concurrent.atomic.AtomicInteger(0);
+        List<String> failedSessions = Collections.synchronizedList(new ArrayList<>());
+        CountDownLatch latch = new CountDownLatch(sessionIds.size());
+
+        for (String sessionId : sessionIds) {
+            broadcastExecutor.submit(() -> {
+                try {
+                    WebSocketSession wsSession = activeSessions.get(sessionId);
+                    if (wsSession != null && wsSession.isOpen()) {
+                        try {
+                            wsSession.sendMessage(new TextMessage(payload));
+                            successCount.incrementAndGet();
+                        } catch (Exception e) {
+                            logger.error("Error broadcasting to session {}: {}", sessionId, e.getMessage());
+                            failedSessions.add(sessionId);
+                        }
+                    } else {
+                        failedSessions.add(sessionId);
+                    }
+                } finally {
+                    latch.countDown();
+                }
+            });
+        }
+        try {
+            latch.await(5, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            logger.warn("Broadcast interrupted");
+        }
+
         for (String sessionId : failedSessions) {
             String userEmail = sessionsByUser.entrySet().stream()
                 .filter(e -> e.getValue().contains(sessionId))
@@ -246,9 +268,8 @@ public class AppointmentWebSocketHandler extends TextWebSocketHandler {
                 cleanupSession(sessionId, userEmail);
             }
         }
-        
-        logger.info("📊 [WebSocket] Broadcast summary - total: {}, success: {}, failed: {}", 
-                activeSessions.size(), successCount, failedSessions.size());
+        logger.info("📊 [WebSocket] Broadcast summary - total: {}, success: {}, failed: {}",
+                activeSessions.size(), successCount.get(), failedSessions.size());
     }
 
     /**
@@ -348,27 +369,45 @@ public class AppointmentWebSocketHandler extends TextWebSocketHandler {
     }
 
     /**
-     * Envía un mensaje solo a las sesiones cuyo usuario tiene rol admin.
+     * Envía un mensaje solo a las sesiones cuyo usuario tiene rol admin (en paralelo).
      */
     private void broadcastToAdminsOnly(WebSocketMessage message) {
-        int successCount = 0;
-        for (Map.Entry<String, WebSocketSession> entry : activeSessions.entrySet()) {
-            Boolean isAdmin = (Boolean) entry.getValue().getAttributes().get("isAdmin");
-            if (!Boolean.TRUE.equals(isAdmin)) {
-                continue;
-            }
-            WebSocketSession wsSession = entry.getValue();
-            if (wsSession != null && wsSession.isOpen()) {
-                try {
-                    String json = objectMapper.writeValueAsString(message);
-                    wsSession.sendMessage(new TextMessage(json));
-                    successCount++;
-                } catch (Exception e) {
-                    logger.error("Error sending to admin session {}: {}", entry.getKey(), e.getMessage());
-                }
-            }
+        String json;
+        try {
+            json = objectMapper.writeValueAsString(message);
+        } catch (Exception e) {
+            logger.error("Error serializing admin message: {}", e.getMessage());
+            return;
         }
-        logger.debug("📢 [WebSocket] ONLINE_USERS_COUNT sent to {} admin session(s)", successCount);
+        final String payload = json;
+        List<Map.Entry<String, WebSocketSession>> adminSessions = activeSessions.entrySet().stream()
+            .filter(e -> Boolean.TRUE.equals(e.getValue().getAttributes().get("isAdmin")))
+            .toList();
+        java.util.concurrent.atomic.AtomicInteger successCount = new java.util.concurrent.atomic.AtomicInteger(0);
+        CountDownLatch latch = new CountDownLatch(adminSessions.size());
+        for (Map.Entry<String, WebSocketSession> entry : adminSessions) {
+            broadcastExecutor.submit(() -> {
+                try {
+                    WebSocketSession wsSession = entry.getValue();
+                    if (wsSession != null && wsSession.isOpen()) {
+                        try {
+                            wsSession.sendMessage(new TextMessage(payload));
+                            successCount.incrementAndGet();
+                        } catch (Exception e) {
+                            logger.error("Error sending to admin session {}: {}", entry.getKey(), e.getMessage());
+                        }
+                    }
+                } finally {
+                    latch.countDown();
+                }
+            });
+        }
+        try {
+            latch.await(3, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+        logger.debug("📢 [WebSocket] ONLINE_USERS_COUNT sent to {} admin session(s)", successCount.get());
     }
 
     /**
@@ -497,17 +536,27 @@ public class AppointmentWebSocketHandler extends TextWebSocketHandler {
      * Cierra todas las conexiones (para graceful shutdown).
      */
     public void closeAllConnections() {
-        for (Map.Entry<String, WebSocketSession> entry : activeSessions.entrySet()) {
-            try {
-                WebSocketMessage message = new WebSocketMessage();
-                message.setType(WebSocketMessageType.SERVER_SHUTDOWN);
-                message.setReconnectInSeconds(30);
-                String json = objectMapper.writeValueAsString(message);
-                entry.getValue().sendMessage(new TextMessage(json));
-                Thread.sleep(100); // Pequeña pausa entre mensajes
-            } catch (Exception e) {
-                logger.error("Error sending shutdown message: {}", e.getMessage());
-            }
+        WebSocketMessage message = new WebSocketMessage();
+        message.setType(WebSocketMessageType.SERVER_SHUTDOWN);
+        message.setReconnectInSeconds(30);
+        String json;
+        try {
+            json = objectMapper.writeValueAsString(message);
+        } catch (Exception e) {
+            logger.error("Error serializing shutdown message: {}", e.getMessage());
+            json = "{\"type\":\"SERVER_SHUTDOWN\",\"reconnectInSeconds\":30}";
+        }
+        final String payload = json;
+        for (WebSocketSession wsSession : activeSessions.values()) {
+            broadcastExecutor.submit(() -> {
+                try {
+                    if (wsSession.isOpen()) {
+                        wsSession.sendMessage(new TextMessage(payload));
+                    }
+                } catch (Exception e) {
+                    logger.error("Error sending shutdown message: {}", e.getMessage());
+                }
+            });
         }
 
         // Cerrar todas las conexiones después de 2 segundos

@@ -6,6 +6,8 @@ import com.ak4n1.turn_management.feature.configuration.domain.WeeklyConfig;
 import com.ak4n1.turn_management.feature.configuration.repository.CalendarConfigurationRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -30,6 +32,7 @@ public class ConfigurationManagementServiceImpl implements ConfigurationManageme
 
     @Override
     @Transactional
+    @CacheEvict(value = "activeConfig", allEntries = true)
     public CalendarConfiguration createWeeklyConfiguration(WeeklyConfig weeklyConfig, Long userId, String notes) {
         logger.info("Creando nueva configuración semanal - Usuario: {}", userId);
 
@@ -57,6 +60,7 @@ public class ConfigurationManagementServiceImpl implements ConfigurationManageme
 
     @Override
     @Transactional
+    @CacheEvict(value = "activeConfig", allEntries = true)
     public CalendarConfiguration updateDailyHours(
             CalendarConfiguration activeConfig,
             List<DailyHours> dailyHoursList,
@@ -95,6 +99,7 @@ public class ConfigurationManagementServiceImpl implements ConfigurationManageme
 
     @Override
     @Transactional
+    @CacheEvict(value = "activeConfig", allEntries = true)
     public CalendarConfiguration updateAppointmentDuration(
             CalendarConfiguration activeConfig,
             Integer durationMinutes,
@@ -142,6 +147,7 @@ public class ConfigurationManagementServiceImpl implements ConfigurationManageme
 
     @Override
     @Transactional
+    @CacheEvict(value = "activeConfig", allEntries = true)
     public CalendarConfiguration createFullConfiguration(
             WeeklyConfig weeklyConfig,
             List<DailyHours> dailyHoursList,
@@ -176,6 +182,7 @@ public class ConfigurationManagementServiceImpl implements ConfigurationManageme
 
     @Override
     @Transactional(readOnly = true)
+    @Cacheable(value = "activeConfig", key = "'active'")
     public Optional<CalendarConfiguration> getActiveConfiguration() {
         return repository.findByActiveTrue();
     }

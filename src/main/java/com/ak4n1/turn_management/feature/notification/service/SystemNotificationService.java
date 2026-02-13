@@ -153,21 +153,13 @@ public class SystemNotificationService {
     }
 
     /**
-     * Marca todas las notificaciones de un usuario como leídas.
+     * Marca todas las notificaciones de un usuario como leídas (bulk update, una sola query).
      */
     @Transactional
     public int markAllAsRead(Long recipientId) {
-        List<SystemNotification> unreadNotifications = 
-            notificationRepository.findByRecipientIdAndReadFalse(recipientId);
-        
-        for (SystemNotification notification : unreadNotifications) {
-            notification.markAsRead();
-        }
-        
-        notificationRepository.saveAll(unreadNotifications);
-        logger.info("Marcadas {} notificaciones como leídas - Usuario: {}", unreadNotifications.size(), recipientId);
-        
-        return unreadNotifications.size();
+        int updated = notificationRepository.markAllAsReadByRecipientId(recipientId, LocalDateTime.now());
+        logger.info("Marcadas {} notificaciones como leídas - Usuario: {}", updated, recipientId);
+        return updated;
     }
 
     /**
@@ -250,94 +242,102 @@ public class SystemNotificationService {
         logger.info("Iniciando envío manual de notificación - Tipo: {}, Destinatario: {}, Tipo de notificación: {}",
             recipientType, recipientEmail != null ? recipientEmail : "ALL_USERS", type);
 
-        List<User> recipients = new ArrayList<>();
-        
-        // Determinar destinatarios
-        if (recipientType == SendManualNotificationRequest.RecipientType.ALL_USERS) {
-            recipients = userRepository.findAllEnabled();
-            // Excluir al admin que envía
-            if (excludeUserId != null) {
-                recipients.removeIf(u -> u.getId().equals(excludeUserId));
-            }
-            // Excluir usuarios adicionales si se especificaron
-            if (excludedEmails != null && !excludedEmails.isEmpty()) {
-                recipients.removeIf(u -> excludedEmails.contains(u.getEmail()));
-                logger.info("Excluyendo {} usuario(s) adicionales de la lista", excludedEmails.size());
-            }
-            logger.info("Enviando a todos los usuarios habilitados (excluyendo admin {} y {} usuario(s) adicionales) - Total: {}", 
-                excludeUserId, excludedEmails != null ? excludedEmails.size() : 0, recipients.size());
-        } else if (recipientType == SendManualNotificationRequest.RecipientType.SPECIFIC_USER) {
-            if (recipientEmail == null || recipientEmail.isBlank()) {
-                throw new RuntimeException("Email del destinatario es requerido cuando recipientType es SPECIFIC_USER");
-            }
-            Optional<User> userOpt = userRepository.findByEmail(recipientEmail);
-            if (userOpt.isEmpty()) {
-                throw new RuntimeException("Usuario con email " + recipientEmail + " no encontrado");
-            }
-            User user = userOpt.get();
-            if (!user.getEnabled()) {
-                throw new RuntimeException("Usuario con email " + recipientEmail + " está deshabilitado");
-            }
-            // Excluir al admin que envía si es el mismo usuario
-            if (excludeUserId == null || !user.getId().equals(excludeUserId)) {
-                recipients.add(user);
-                logger.info("Enviando a usuario específico - Email: {}", recipientEmail);
-            } else {
-                logger.info("Admin {} intentó enviarse una notificación a sí mismo, omitiendo", excludeUserId);
-            }
-        }
-
-        int totalRecipients = recipients.size();
+        int totalRecipients = 0;
         int sentImmediately = 0;
         int pendingDelivery = 0;
         int excludedByPreferences = 0;
         List<Long> notificationIds = new ArrayList<>();
 
-        // Procesar cada destinatario
-        for (User recipient : recipients) {
-            try {
-                // Verificar preferencias de notificación
-                boolean shouldSend = preferenceService.shouldReceiveNotification(recipient.getId(), type);
-                
-                if (!shouldSend) {
+        if (recipientType == SendManualNotificationRequest.RecipientType.ALL_USERS) {
+            // Procesar por lotes para evitar cargar todos los usuarios en memoria
+            final java.util.Set<String> excludedSet = excludedEmails != null ? new java.util.HashSet<>(excludedEmails) : java.util.Collections.emptySet();
+            final Long excludeId = excludeUserId;
+            int page = 0;
+            final int batchSize = 100;
+            Page<User> userPage;
+
+            do {
+                userPage = userRepository.findAllEnabled(PageRequest.of(page, batchSize));
+                List<User> batch = userPage.getContent();
+                List<User> toProcess = batch.stream()
+                    .filter(u -> excludeId == null || !u.getId().equals(excludeId))
+                    .filter(u -> excludedSet.isEmpty() || !excludedSet.contains(u.getEmail()))
+                    .toList();
+
+                if (!toProcess.isEmpty()) {
+                    List<Long> recipientIds = toProcess.stream().map(User::getId).toList();
+                    Map<Long, Long> unreadCounts = buildUnreadCountMap(recipientIds);
+
+                    for (User recipient : toProcess) {
+                        if (!preferenceService.shouldReceiveNotification(recipient.getId(), type)) {
+                            excludedByPreferences++;
+                            totalRecipients++;
+                            continue;
+                        }
+                        totalRecipients++;
+
+                        SystemNotification notification = createNotification(type, recipient.getId(), title, message, null, null);
+                        notificationIds.add(notification.getId());
+                        long prevCount = unreadCounts.getOrDefault(recipient.getId(), 0L);
+                        long unreadCount = prevCount + 1;
+                        unreadCounts.put(recipient.getId(), unreadCount);
+
+                        try {
+                            WebSocketMessage wsMessage = new WebSocketMessage();
+                            wsMessage.setType(WebSocketMessageType.NOTIFICATION_COUNT_UPDATED);
+                            wsMessage.setTitle(title);
+                            wsMessage.setMessage(message);
+                            Map<String, Object> data = new HashMap<>();
+                            data.put("type", type.name());
+                            data.put("notificationId", notification.getId());
+                            data.put("unreadCount", unreadCount);
+                            wsMessage.setData(data);
+                            webSocketHandler.sendMessageToUser(recipient.getEmail(), wsMessage);
+                            sentImmediately++;
+                        } catch (Exception e) {
+                            pendingDelivery++;
+                        }
+                    }
+                }
+                page++;
+            } while (userPage.hasNext());
+
+            logger.info("Enviando a todos los usuarios habilitados (excluyendo admin y excluidos) - Total: {}", totalRecipients);
+        } else if (recipientType == SendManualNotificationRequest.RecipientType.SPECIFIC_USER) {
+            if (recipientEmail == null || recipientEmail.isBlank()) {
+                throw new RuntimeException("Email del destinatario es requerido cuando recipientType es SPECIFIC_USER");
+            }
+            User user = userRepository.findByEmail(recipientEmail)
+                .orElseThrow(() -> new RuntimeException("Usuario con email " + recipientEmail + " no encontrado"));
+            if (!user.getEnabled()) {
+                throw new RuntimeException("Usuario con email " + recipientEmail + " está deshabilitado");
+            }
+            if (excludeUserId != null && user.getId().equals(excludeUserId)) {
+                logger.info("Admin intentó enviarse una notificación a sí mismo, omitiendo");
+            } else {
+                totalRecipients = 1;
+                if (preferenceService.shouldReceiveNotification(user.getId(), type)) {
+                    SystemNotification notification = createNotification(type, user.getId(), title, message, null, null);
+                    notificationIds.add(notification.getId());
+                    try {
+                        long unreadCount = countUnreadNotifications(user.getId());
+                        WebSocketMessage wsMessage = new WebSocketMessage();
+                        wsMessage.setType(WebSocketMessageType.NOTIFICATION_COUNT_UPDATED);
+                        wsMessage.setTitle(title);
+                        wsMessage.setMessage(message);
+                        Map<String, Object> data = new HashMap<>();
+                        data.put("type", type.name());
+                        data.put("notificationId", notification.getId());
+                        data.put("unreadCount", unreadCount);
+                        wsMessage.setData(data);
+                        webSocketHandler.sendMessageToUser(user.getEmail(), wsMessage);
+                        sentImmediately++;
+                    } catch (Exception e) {
+                        pendingDelivery++;
+                    }
+                } else {
                     excludedByPreferences++;
-                    logger.debug("Notificación omitida para usuario {} debido a preferencias", recipient.getEmail());
-                    continue;
                 }
-
-                // Crear notificación en BD
-                SystemNotification notification = createNotification(
-                    type, recipient.getId(), title, message, null, null);
-                notificationIds.add(notification.getId());
-
-                // Intentar enviar vía WebSocket
-                try {
-                    long unreadCount = countUnreadNotifications(recipient.getId());
-
-                    WebSocketMessage wsMessage = new WebSocketMessage();
-                    wsMessage.setType(WebSocketMessageType.NOTIFICATION_COUNT_UPDATED);
-                    wsMessage.setTitle(title);
-                    wsMessage.setMessage(message);
-                    Map<String, Object> data = new HashMap<>();
-                    data.put("type", type.name());
-                    data.put("notificationId", notification.getId());
-                    data.put("unreadCount", unreadCount);
-                    wsMessage.setData(data);
-
-                    webSocketHandler.sendMessageToUser(recipient.getEmail(), wsMessage);
-                    sentImmediately++;
-                    logger.debug("Notificación enviada inmediatamente vía WebSocket - Usuario: {}", recipient.getEmail());
-                } catch (Exception e) {
-                    // Usuario no conectado, notificación queda pendiente
-                    pendingDelivery++;
-                    logger.debug("Usuario no conectado, notificación guardada para entrega posterior - Usuario: {}", 
-                        recipient.getEmail());
-                }
-
-            } catch (Exception e) {
-                logger.error("Error al procesar notificación para usuario {}: {}", 
-                    recipient.getEmail(), e.getMessage(), e);
-                // Continuar con los demás usuarios aunque uno falle
             }
         }
 
@@ -398,6 +398,19 @@ public class SystemNotificationService {
         stats.put("readPercentage", totalNotifications > 0 ? (readNotifications * 100.0 / totalNotifications) : 0.0);
         
         return stats;
+    }
+
+    /**
+     * Construye un mapa recipientId -> count de notificaciones no leídas (batch query).
+     */
+    private Map<Long, Long> buildUnreadCountMap(List<Long> recipientIds) {
+        if (recipientIds.isEmpty()) return Map.of();
+        List<Object[]> results = notificationRepository.countUnreadByRecipientIds(recipientIds);
+        Map<Long, Long> map = new HashMap<>();
+        for (Object[] row : results) {
+            map.put((Long) row[0], (Long) row[1]);
+        }
+        return map;
     }
 
     /**

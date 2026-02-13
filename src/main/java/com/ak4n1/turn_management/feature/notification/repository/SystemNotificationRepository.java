@@ -107,6 +107,26 @@ public interface SystemNotificationRepository extends JpaRepository<SystemNotifi
     List<SystemNotification> findByRecipientIdAndReadFalse(Long recipientId);
 
     /**
+     * Marca todas las notificaciones no leídas de un usuario como leídas (bulk update, una sola query).
+     *
+     * @param recipientId ID del destinatario
+     * @return Número de notificaciones actualizadas
+     */
+    @Modifying
+    @Transactional
+    @Query("UPDATE SystemNotification n SET n.read = true, n.readAt = :now, n.updatedAt = :now WHERE n.recipientId = :recipientId AND n.read = false")
+    int markAllAsReadByRecipientId(@Param("recipientId") Long recipientId, @Param("now") LocalDateTime now);
+
+    /**
+     * Cuenta notificaciones no leídas por múltiples destinatarios en una sola query (batch).
+     *
+     * @param recipientIds Lista de IDs de destinatarios
+     * @return Pares [recipientId, count] para cada destinatario con notificaciones no leídas
+     */
+    @Query("SELECT n.recipientId, COUNT(n) FROM SystemNotification n WHERE n.recipientId IN :recipientIds AND n.read = false GROUP BY n.recipientId")
+    List<Object[]> countUnreadByRecipientIds(@Param("recipientIds") List<Long> recipientIds);
+
+    /**
      * Elimina notificaciones leídas más antiguas que el threshold.
      */
     @Modifying

@@ -11,7 +11,10 @@ import java.time.LocalDateTime;
  * acciones rápidas como aprobar/rechazar solicitudes de reprogramación.
  */
 @Entity
-@Table(name = "system_notifications")
+@Table(name = "system_notifications", indexes = {
+    @Index(name = "idx_notif_recipient_read_created", columnList = "recipient_id, is_read, created_at"),
+    @Index(name = "idx_notif_created", columnList = "created_at")
+})
 public class SystemNotification {
 
     @Id

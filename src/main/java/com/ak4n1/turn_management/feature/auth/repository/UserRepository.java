@@ -54,6 +54,15 @@ public interface UserRepository extends JpaRepository<User, Long> {
     List<User> findAllEnabled();
 
     /**
+     * Encuentra usuarios habilitados de forma paginada (para procesamiento por lotes).
+     *
+     * @param pageable Paginación
+     * @return Página de usuarios habilitados
+     */
+    @Query("SELECT u FROM User u WHERE u.enabled = true")
+    Page<User> findAllEnabled(Pageable pageable);
+
+    /**
      * Busca usuarios con filtros para administrador (listado paginado).
      *
      * @param search Búsqueda por email, nombre, apellido (opcional)
