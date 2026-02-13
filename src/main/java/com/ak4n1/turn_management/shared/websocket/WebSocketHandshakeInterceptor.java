@@ -131,6 +131,9 @@ public class WebSocketHandshakeInterceptor implements HandshakeInterceptor {
         attributes.put("userId", user.getId());
         attributes.put("token", token);
         attributes.put("ipAddress", ipAddress);
+        boolean isAdmin = user.getRoles() != null && user.getRoles().stream()
+                .anyMatch(r -> r != null && "ROLE_ADMIN".equals(r.getName()));
+        attributes.put("isAdmin", isAdmin);
 
         logger.info("✅ [WebSocket] Handshake ACCEPTED for user: {}", user.getEmail());
         return true;

@@ -105,8 +105,7 @@ public class CreateCalendarExceptionUseCase {
             handleCancellationsAndNotifications(saved, affectedAppointments, request, userId);
         }
 
-        // 6. WebSocket Notifications
-        notifyAdmins(saved, affectedAppointmentsCount);
+        // 6. WebSocket: solo actualización de disponibilidad (sin campanita)
         notifyAvailabilityUpdate(saved.getExceptionDate());
 
         // 7. Map to Response
@@ -252,16 +251,6 @@ public class CreateCalendarExceptionUseCase {
                         affectedApts.get(0).getAppointmentId());
             });
         });
-    }
-
-    private void notifyAdmins(CalendarException saved, int affectedCount) {
-        webSocketNotificationService.sendNotificationToAdmins(
-                NotificationType.CALENDAR_CONFIGURATION_CHANGED,
-                "Excepción de Calendario Creada",
-                String.format("Excepción para %s (%s). Afectados: %d",
-                        saved.getExceptionDate(), saved.getIsOpen() ? "abierto" : "cerrado", affectedCount),
-                RelatedEntityType.CALENDAR_EXCEPTION,
-                saved.getId());
     }
 
     private void notifyAvailabilityUpdate(LocalDate date) {

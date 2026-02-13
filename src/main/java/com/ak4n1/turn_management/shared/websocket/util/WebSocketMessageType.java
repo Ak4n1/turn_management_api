@@ -18,6 +18,7 @@ public enum WebSocketMessageType {
     APPOINTMENT_EXPIRED,        // Turno expirado
     AVAILABILITY_UPDATED,       // Disponibilidad actualizada
     NOTIFICATION_COUNT_UPDATED, // Contador de notificaciones no leídas actualizado
+    ONLINE_USERS_COUNT,         // Usuarios conectados vía WebSocket (para admins)
     RESCHEDULE_REQUEST_CREATED,  // Solicitud de reprogramación creada
     RESCHEDULE_REQUEST_APPROVED, // Solicitud de reprogramación aprobada
     RESCHEDULE_REQUEST_REJECTED, // Solicitud de reprogramación rechazada

@@ -33,9 +33,9 @@ public class WebSocketSecurityValidator {
     // Rate limiting: Email -> Número de conexiones activas
     private final Map<String, Integer> activeConnectionsByUser = new ConcurrentHashMap<>();
 
-    // Configuración de rate limiting
-    private static final int MAX_CONNECTIONS_PER_IP_PER_MINUTE = 5;
-    private static final int MAX_ACTIVE_CONNECTIONS_PER_USER = 3;
+    // Configuración de rate limiting (permite reintentos de reconexión + múltiples pestañas)
+    private static final int MAX_CONNECTIONS_PER_IP_PER_MINUTE = 30;
+    private static final int MAX_ACTIVE_CONNECTIONS_PER_USER = 5;
     private static final long RATE_LIMIT_WINDOW_MS = 60_000; // 1 minuto
 
     @Value("${security.allowed-origins}")

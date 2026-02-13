@@ -102,34 +102,32 @@ public class NotificationPreferenceService {
     }
 
     /**
-     * Verifica si un usuario quiere recibir un tipo específico de notificación (usando enum).
-     * 
+     * Verifica si un usuario quiere recibir una notificación en plataforma (campanita / WebSocket).
+     * No depende de emailEnabled: las notificaciones de plataforma se muestran aunque el usuario
+     * tenga desactivados los emails. Solo se respetan las preferencias por tipo cuando aplican.
+     *
      * @param userId ID del usuario
      * @param notificationType Tipo de notificación
-     * @return true si el usuario quiere recibir la notificación, false en caso contrario
+     * @return true si el usuario debe ver la notificación en plataforma, false en caso contrario
      */
     public boolean shouldReceiveNotification(Long userId, NotificationType notificationType) {
         NotificationPreference preference = preferenceRepository.findByUserId(userId)
             .orElseGet(() -> new NotificationPreference(userId)); // Defaults: todas habilitadas
 
-        // Si los emails están deshabilitados globalmente, no enviar nada
-        if (Boolean.FALSE.equals(preference.getEmailEnabled())) {
-            return false;
-        }
+        // No bloquear por emailEnabled: la campanita funciona aunque los emails estén desactivados.
+        // El envío de correo se controla en EmailServiceImpl con shouldSendNotification().
 
-        // Verificar tipo específico
+        // Verificar tipo específico (solo preferencias por tipo; emailEnabled no aplica aquí)
         return switch (notificationType) {
             case APPOINTMENT_CREATED -> Boolean.TRUE.equals(preference.getAppointmentCreated());
             case APPOINTMENT_CONFIRMED -> Boolean.TRUE.equals(preference.getAppointmentConfirmed());
-            case APPOINTMENT_CANCELLED, APPOINTMENT_CANCELLED_BY_ADMIN -> 
+            case APPOINTMENT_CANCELLED, APPOINTMENT_CANCELLED_BY_ADMIN ->
                 Boolean.TRUE.equals(preference.getAppointmentCancelled());
             case APPOINTMENT_RESCHEDULED -> Boolean.TRUE.equals(preference.getAppointmentRescheduled());
             case APPOINTMENT_REMINDER -> Boolean.TRUE.equals(preference.getReminderEnabled());
-            // Para notificaciones manuales (ADMIN_ANNOUNCEMENT, SYSTEM_MAINTENANCE, etc.), 
-            // siempre enviar si emailEnabled es true
-            case ADMIN_ANNOUNCEMENT, SYSTEM_MAINTENANCE, IMPORTANT_UPDATE, PROMOTION, REMINDER -> 
+            case ADMIN_ANNOUNCEMENT, SYSTEM_MAINTENANCE, IMPORTANT_UPDATE, PROMOTION, REMINDER ->
                 Boolean.TRUE.equals(preference.getEmailEnabled());
-            default -> true; // Por defecto, enviar (para otros tipos de notificaciones)
+            default -> true; // RESCHEDULE_REQUEST_*, etc.: siempre mostrar en plataforma
         };
     }
 

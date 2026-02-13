@@ -99,6 +99,15 @@ public class SystemNotificationService {
     }
 
     /**
+     * Cuenta las notificaciones no leídas de un usuario excluyendo un tipo
+     * (ej. APPOINTMENT_CREATED para el badge de la campanita).
+     */
+    @Transactional(readOnly = true)
+    public long countUnreadNotificationsExcludingType(Long recipientId, com.ak4n1.turn_management.feature.notification.domain.NotificationType excludeType) {
+        return notificationRepository.countByRecipientIdAndReadFalseAndTypeNot(recipientId, excludeType);
+    }
+
+    /**
      * Marca una notificación como leída.
      */
     @Transactional
@@ -130,29 +139,17 @@ public class SystemNotificationService {
     }
 
     /**
-     * Obtiene notificaciones con filtros avanzados.
+     * Obtiene notificaciones con filtros avanzados (incluye rango de fechas).
      */
     @Transactional(readOnly = true)
     public Page<SystemNotification> getNotificationsWithFilters(Long recipientId, NotificationType type,
-                                                                 Boolean read, String search,
+                                                                 Boolean read, LocalDateTime dateFrom,
+                                                                 LocalDateTime dateTo, String search,
                                                                  int page, int size) {
         Pageable pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "createdAt"));
-        
-        if (type != null && read != null && search != null && !search.trim().isEmpty()) {
-            return notificationRepository.findByRecipientIdAndTypeAndReadAndSearch(
-                recipientId, type, read, search.trim(), pageable);
-        } else if (type != null && read != null) {
-            return notificationRepository.findByRecipientIdAndTypeAndRead(recipientId, type, read, pageable);
-        } else if (type != null) {
-            return notificationRepository.findByRecipientIdAndType(recipientId, type, pageable);
-        } else if (read != null) {
-            return notificationRepository.findByRecipientIdAndRead(recipientId, read, pageable);
-        } else if (search != null && !search.trim().isEmpty()) {
-            return notificationRepository.findByRecipientIdAndSearch(
-                recipientId, search.trim(), pageable);
-        } else {
-            return notificationRepository.findByRecipientIdOrderByCreatedAtDesc(recipientId, pageable);
-        }
+        String searchTrimmed = (search != null && !search.trim().isEmpty()) ? search.trim() : null;
+        return notificationRepository.findAdminNotificationsWithFilters(
+            recipientId, type, read, dateFrom, dateTo, searchTrimmed, pageable);
     }
 
     /**
@@ -236,6 +233,8 @@ public class SystemNotificationService {
      * @param type Tipo de notificación
      * @param title Título de la notificación
      * @param message Mensaje de la notificación
+     * @param excludeUserId ID del usuario a excluir (normalmente el admin que envía)
+     * @param excludedEmails Lista de emails de usuarios a excluir cuando recipientType es ALL_USERS (opcional)
      * @return Resumen del envío
      */
     @Transactional
@@ -244,7 +243,9 @@ public class SystemNotificationService {
             String recipientEmail,
             NotificationType type,
             String title,
-            String message) {
+            String message,
+            Long excludeUserId,
+            List<String> excludedEmails) {
         
         logger.info("Iniciando envío manual de notificación - Tipo: {}, Destinatario: {}, Tipo de notificación: {}",
             recipientType, recipientEmail != null ? recipientEmail : "ALL_USERS", type);
@@ -254,7 +255,17 @@ public class SystemNotificationService {
         // Determinar destinatarios
         if (recipientType == SendManualNotificationRequest.RecipientType.ALL_USERS) {
             recipients = userRepository.findAllEnabled();
-            logger.info("Enviando a todos los usuarios habilitados - Total: {}", recipients.size());
+            // Excluir al admin que envía
+            if (excludeUserId != null) {
+                recipients.removeIf(u -> u.getId().equals(excludeUserId));
+            }
+            // Excluir usuarios adicionales si se especificaron
+            if (excludedEmails != null && !excludedEmails.isEmpty()) {
+                recipients.removeIf(u -> excludedEmails.contains(u.getEmail()));
+                logger.info("Excluyendo {} usuario(s) adicionales de la lista", excludedEmails.size());
+            }
+            logger.info("Enviando a todos los usuarios habilitados (excluyendo admin {} y {} usuario(s) adicionales) - Total: {}", 
+                excludeUserId, excludedEmails != null ? excludedEmails.size() : 0, recipients.size());
         } else if (recipientType == SendManualNotificationRequest.RecipientType.SPECIFIC_USER) {
             if (recipientEmail == null || recipientEmail.isBlank()) {
                 throw new RuntimeException("Email del destinatario es requerido cuando recipientType es SPECIFIC_USER");
@@ -267,8 +278,13 @@ public class SystemNotificationService {
             if (!user.getEnabled()) {
                 throw new RuntimeException("Usuario con email " + recipientEmail + " está deshabilitado");
             }
-            recipients.add(user);
-            logger.info("Enviando a usuario específico - Email: {}", recipientEmail);
+            // Excluir al admin que envía si es el mismo usuario
+            if (excludeUserId == null || !user.getId().equals(excludeUserId)) {
+                recipients.add(user);
+                logger.info("Enviando a usuario específico - Email: {}", recipientEmail);
+            } else {
+                logger.info("Admin {} intentó enviarse una notificación a sí mismo, omitiendo", excludeUserId);
+            }
         }
 
         int totalRecipients = recipients.size();
@@ -276,15 +292,6 @@ public class SystemNotificationService {
         int pendingDelivery = 0;
         int excludedByPreferences = 0;
         List<Long> notificationIds = new ArrayList<>();
-
-        // Crear mensaje WebSocket
-        WebSocketMessage wsMessage = new WebSocketMessage();
-        wsMessage.setType(mapNotificationTypeToWebSocketType(type));
-        wsMessage.setTitle(title);
-        wsMessage.setMessage(message);
-        Map<String, Object> data = new HashMap<>();
-        data.put("type", type.name());
-        wsMessage.setData(data);
 
         // Procesar cada destinatario
         for (User recipient : recipients) {
@@ -305,6 +312,18 @@ public class SystemNotificationService {
 
                 // Intentar enviar vía WebSocket
                 try {
+                    long unreadCount = countUnreadNotifications(recipient.getId());
+
+                    WebSocketMessage wsMessage = new WebSocketMessage();
+                    wsMessage.setType(WebSocketMessageType.NOTIFICATION_COUNT_UPDATED);
+                    wsMessage.setTitle(title);
+                    wsMessage.setMessage(message);
+                    Map<String, Object> data = new HashMap<>();
+                    data.put("type", type.name());
+                    data.put("notificationId", notification.getId());
+                    data.put("unreadCount", unreadCount);
+                    wsMessage.setData(data);
+
                     webSocketHandler.sendMessageToUser(recipient.getEmail(), wsMessage);
                     sentImmediately++;
                     logger.debug("Notificación enviada inmediatamente vía WebSocket - Usuario: {}", recipient.getEmail());
@@ -319,16 +338,6 @@ public class SystemNotificationService {
                 logger.error("Error al procesar notificación para usuario {}: {}", 
                     recipient.getEmail(), e.getMessage(), e);
                 // Continuar con los demás usuarios aunque uno falle
-            }
-        }
-
-        // Si es ALL_USERS, también hacer broadcast para usuarios conectados que no están en la lista
-        if (recipientType == SendManualNotificationRequest.RecipientType.ALL_USERS) {
-            try {
-                webSocketHandler.broadcastMessage(wsMessage);
-                logger.info("Notificación broadcast enviada a todos los usuarios conectados");
-            } catch (Exception e) {
-                logger.error("Error al enviar broadcast: {}", e.getMessage(), e);
             }
         }
 

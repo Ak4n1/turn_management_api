@@ -4,6 +4,7 @@ import com.ak4n1.turn_management.feature.auth.service.UserService;
 import com.ak4n1.turn_management.feature.configuration.dto.request.AppointmentDurationRequest;
 import com.ak4n1.turn_management.feature.configuration.dto.request.CalendarExceptionRequest;
 import com.ak4n1.turn_management.feature.configuration.dto.request.DailyHoursConfigRequest;
+import com.ak4n1.turn_management.feature.configuration.dto.request.FullConfigRequest;
 import com.ak4n1.turn_management.feature.configuration.dto.request.ManualBlockRequest;
 import com.ak4n1.turn_management.feature.configuration.dto.request.PreviewImpactRequest;
 import com.ak4n1.turn_management.feature.configuration.dto.request.WeeklyConfigRequest;
@@ -178,6 +179,34 @@ public class CalendarConfigurationController {
             response.getVersion(), response.getAppointmentDurationMinutes());
         
         return ResponseEntity.ok(response);
+    }
+
+    /**
+     * Guarda la configuración completa (semanal + horarios diarios + duración) en una sola operación atómica.
+     * Si alguna validación falla (ej. duración 25 min), no se persiste nada y la versión no cambia.
+     * La versión del sistema se incrementa en 1 (no en 3).
+     *
+     * POST /api/admin/calendar/full-config
+     *
+     * Requiere: Rol ADMIN
+     *
+     * @param request    DTO con weeklyConfig, dailyHours y durationMinutes
+     * @param httpRequest Request HTTP para obtener el token
+     * @return Configuración guardada (201 Created)
+     */
+    @PostMapping("/full-config")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<CalendarConfigurationResponse> saveFullConfig(
+            @Valid @RequestBody FullConfigRequest request,
+            HttpServletRequest httpRequest) {
+
+        logger.info("Solicitud de guardado de configuración completa recibida");
+
+        Long userId = getCurrentUserId(httpRequest);
+        CalendarConfigurationResponse response = configurationService.saveFullConfig(request, userId);
+
+        logger.info("Configuración completa guardada exitosamente - Versión: {}", response.getVersion());
+        return ResponseEntity.status(HttpStatus.CREATED).body(response);
     }
 
     /**

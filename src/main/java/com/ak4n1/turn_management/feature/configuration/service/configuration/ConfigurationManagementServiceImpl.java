@@ -141,6 +141,40 @@ public class ConfigurationManagementServiceImpl implements ConfigurationManageme
     }
 
     @Override
+    @Transactional
+    public CalendarConfiguration createFullConfiguration(
+            WeeklyConfig weeklyConfig,
+            List<DailyHours> dailyHoursList,
+            Integer durationMinutes,
+            Long userId,
+            String notes) {
+        logger.info("Guardando configuración completa - Usuario: {}, Duración: {} min", userId, durationMinutes);
+
+        // 1. Una sola nueva versión
+        Integer newVersion = versionService.calculateNextVersion();
+
+        // 2. Desactivar configuración anterior
+        versionService.deactivatePreviousConfiguration();
+
+        // 3. Crear una sola configuración con todo
+        String configurationNotes = notes != null ? notes : "Configuración completa (semanal, horarios, duración)";
+        CalendarConfiguration newConfiguration = new CalendarConfiguration(weeklyConfig, userId, configurationNotes);
+        newConfiguration.setVersion(newVersion);
+        newConfiguration.setActive(true);
+        newConfiguration.setAppointmentDurationMinutes(durationMinutes);
+
+        for (DailyHours dh : dailyHoursList) {
+            dh.setCalendarConfiguration(newConfiguration);
+        }
+        newConfiguration.setDailyHours(dailyHoursList);
+
+        // 4. Guardar
+        CalendarConfiguration saved = repository.save(newConfiguration);
+        logger.info("Configuración completa guardada - ID: {}, Versión: {}", saved.getId(), saved.getVersion());
+        return saved;
+    }
+
+    @Override
     @Transactional(readOnly = true)
     public Optional<CalendarConfiguration> getActiveConfiguration() {
         return repository.findByActiveTrue();

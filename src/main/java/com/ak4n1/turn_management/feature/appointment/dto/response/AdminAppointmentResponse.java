@@ -23,6 +23,14 @@ public class AdminAppointmentResponse {
     private String cancelledAt;
     private String cancellationReason;
     private Long previousAppointmentId;
+    /** ID del turno siguiente si este turno fue reprogramado (estado RESCHEDULED). */
+    private Long nextAppointmentId;
+    /** Fecha del nuevo turno cuando este fue reprogramado (formato YYYY-MM-DD). */
+    private String nextAppointmentDate;
+    /** Hora de inicio del nuevo turno (formato HH:mm). */
+    private String nextAppointmentStartTime;
+    /** Hora de fin del nuevo turno (formato HH:mm). */
+    private String nextAppointmentEndTime;
     private Integer calendarConfigVersion;
     private String createdAt;
     private String updatedAt;
@@ -149,6 +157,38 @@ public class AdminAppointmentResponse {
 
     public void setPreviousAppointmentId(Long previousAppointmentId) {
         this.previousAppointmentId = previousAppointmentId;
+    }
+
+    public Long getNextAppointmentId() {
+        return nextAppointmentId;
+    }
+
+    public void setNextAppointmentId(Long nextAppointmentId) {
+        this.nextAppointmentId = nextAppointmentId;
+    }
+
+    public String getNextAppointmentDate() {
+        return nextAppointmentDate;
+    }
+
+    public void setNextAppointmentDate(String nextAppointmentDate) {
+        this.nextAppointmentDate = nextAppointmentDate;
+    }
+
+    public String getNextAppointmentStartTime() {
+        return nextAppointmentStartTime;
+    }
+
+    public void setNextAppointmentStartTime(String nextAppointmentStartTime) {
+        this.nextAppointmentStartTime = nextAppointmentStartTime;
+    }
+
+    public String getNextAppointmentEndTime() {
+        return nextAppointmentEndTime;
+    }
+
+    public void setNextAppointmentEndTime(String nextAppointmentEndTime) {
+        this.nextAppointmentEndTime = nextAppointmentEndTime;
     }
 
     public Integer getCalendarConfigVersion() {

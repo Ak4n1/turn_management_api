@@ -288,6 +288,15 @@ public class AppointmentServiceImpl implements AppointmentService {
                 HttpStatus.BAD_REQUEST);
         }
 
+        // 3.2. Validar perfil completo (seguridad backend: no depender del frontend)
+        User user = userRepository.findById(userId)
+            .orElseThrow(() -> new ApiException("Usuario no encontrado", HttpStatus.NOT_FOUND));
+        if (!user.isProfileComplete()) {
+            throw new ApiException(
+                "Para pedir un turno debes completar tu información personal: teléfono, calle, número, piso, ciudad, código postal y fecha de nacimiento.",
+                HttpStatus.BAD_REQUEST);
+        }
+
         // 4. Obtener configuración activa
         CalendarConfiguration activeConfig = configurationRepository.findByActiveTrue()
             .orElseThrow(() -> new ApiException(
@@ -865,7 +874,7 @@ public class AppointmentServiceImpl implements AppointmentService {
                 cancelledAppointment.getId(), e.getMessage(), e);
         }
 
-        // 10. Enviar notificación WebSocket (asíncrono, no bloquea) - US-N001
+        // 10. Enviar notificación WebSocket al usuario (asíncrono, no bloquea) - US-N001
         try {
             webSocketNotificationService.sendNotificationToUser(
                 userId,
@@ -879,6 +888,24 @@ public class AppointmentServiceImpl implements AppointmentService {
             );
         } catch (Exception e) {
             logger.error("Error al enviar notificación WebSocket de turno cancelado - Turno ID: {}. Error: {}", 
+                cancelledAppointment.getId(), e.getMessage(), e);
+        }
+
+        // 10.1. Notificar a admins cuando un usuario cancela su turno
+        try {
+            User user = userRepository.findById(userId)
+                .orElseThrow(() -> new ApiException("Usuario no encontrado", HttpStatus.NOT_FOUND));
+            webSocketNotificationService.sendNotificationToAdmins(
+                com.ak4n1.turn_management.feature.notification.domain.NotificationType.APPOINTMENT_CANCELLED,
+                "Turno cancelado por usuario",
+                String.format("%s %s canceló su turno para el %s a las %s. Motivo: %s",
+                    user.getFirstName(), user.getLastName(), cancelledAppointment.getAppointmentDate(),
+                    cancelledAppointment.getStartTime(), reason),
+                com.ak4n1.turn_management.feature.notification.domain.RelatedEntityType.APPOINTMENT,
+                cancelledAppointment.getId()
+            );
+        } catch (Exception e) {
+            logger.error("Error al enviar notificación WebSocket a admins por cancelación de usuario - Turno ID: {}. Error: {}",
                 cancelledAppointment.getId(), e.getMessage(), e);
         }
 
@@ -1012,17 +1039,14 @@ public class AppointmentServiceImpl implements AppointmentService {
         );
         historyRepository.save(history);
 
-        // 11. Crear notificaciones del sistema para todos los administradores
-        // Implementa US-T025.5
+        // 11. Crear notificación en BD para cada admin (síncrono, así siempre aparece en la campanita). Sin email. No configurable.
         try {
             List<com.ak4n1.turn_management.feature.auth.domain.User> admins = userRepository.findAllAdmins();
             com.ak4n1.turn_management.feature.auth.domain.User requestingUser = userService.findById(userId)
                 .orElse(null);
-            
-            String userName = requestingUser != null 
+            String userName = requestingUser != null
                 ? String.format("%s %s", requestingUser.getFirstName(), requestingUser.getLastName())
                 : "Usuario";
-            
             String title = "Nueva solicitud de reprogramación";
             String message = String.format(
                 "%s solicita reprogramar turno del %s a las %s al %s a las %s",
@@ -1032,7 +1056,6 @@ public class AppointmentServiceImpl implements AppointmentService {
                 request.getNewDate(),
                 request.getNewStartTime()
             );
-
             for (com.ak4n1.turn_management.feature.auth.domain.User admin : admins) {
                 notificationService.createNotification(
                     NotificationType.RESCHEDULE_REQUEST_PENDING,
@@ -1043,23 +1066,18 @@ public class AppointmentServiceImpl implements AppointmentService {
                     rescheduleRequest.getId()
                 );
             }
-            
-            logger.info("Notificaciones creadas para {} administradores - Solicitud ID: {}", 
-                admins.size(), rescheduleRequest.getId());
+            logger.info("Notificaciones creadas para {} administradores - Solicitud ID: {}", admins.size(), rescheduleRequest.getId());
         } catch (Exception e) {
-            // No fallar la creación de la solicitud si falla la notificación
             logger.warn("Error al crear notificaciones para administradores: {}", e.getMessage(), e);
         }
 
-        // 12. Enviar notificación WebSocket a admins (asíncrono, no bloquea) - US-N002
+        // 12. Enviar WebSocket a admins (actualiza badge en tiempo real). Asíncrono.
         try {
             com.ak4n1.turn_management.feature.auth.domain.User requestingUser = userService.findById(userId)
                 .orElse(null);
-            
-            String userName = requestingUser != null 
+            String userName = requestingUser != null
                 ? String.format("%s %s", requestingUser.getFirstName(), requestingUser.getLastName())
                 : "Usuario";
-            
             webSocketNotificationService.sendNotificationToAdmins(
                 com.ak4n1.turn_management.feature.notification.domain.NotificationType.RESCHEDULE_REQUEST_PENDING,
                 "Nueva Solicitud de Reprogramación",
@@ -1780,11 +1798,12 @@ public class AppointmentServiceImpl implements AppointmentService {
             java.util.List<Integer> daysOfWeek,
             Boolean upcoming,
             Boolean past,
+            String sortOrder,
             int page,
             int size) {
         
-        logger.info("Consultando turnos del usuario - ID: {}, Estado: {}, Desde: {}, Hasta: {}, Días: {}, Upcoming: {}, Past: {}, Página: {}, Tamaño: {}",
-            userId, status, fromDate, toDate, daysOfWeek, upcoming, past, page, size);
+        logger.info("Consultando turnos del usuario - ID: {}, Estado: {}, Desde: {}, Hasta: {}, Días: {}, Upcoming: {}, Past: {}, SortOrder: {}, Página: {}, Tamaño: {}",
+            userId, status, fromDate, toDate, daysOfWeek, upcoming, past, sortOrder, page, size);
 
         // 1. Validar que upcoming y past no sean ambos true
         if (Boolean.TRUE.equals(upcoming) && Boolean.TRUE.equals(past)) {
@@ -1836,13 +1855,38 @@ public class AppointmentServiceImpl implements AppointmentService {
         // El ORDER BY ya está definido en la query SQL con nombres de columna (appointment_date, start_time)
         Pageable pageable = PageRequest.of(page, size, Sort.unsorted());
 
-        // 7. Buscar turnos con filtros
+        // 7. Buscar turnos con filtros (orden: asc = más viejos primero, desc = más recientes primero)
         List<Integer> daysOfWeekParam = (daysOfWeek != null && !daysOfWeek.isEmpty()) ? daysOfWeek : null;
         int daysOfWeekCount = (daysOfWeekParam != null) ? daysOfWeekParam.size() : 0;
-        String stateStr = (status != null) ? status.name() : null;
-        
-        Page<Appointment> appointmentPage = appointmentRepository.findByUserIdWithFilters(
-            userId, stateStr, adjustedFromDate, adjustedToDate, daysOfWeekParam, daysOfWeekCount, pageable);
+        boolean orderDesc = sortOrder != null && "desc".equalsIgnoreCase(sortOrder.trim());
+        // Cancelados unificados: CANCELLED incluye usuario y admin
+        java.util.List<String> statesParam = null;
+        int statesCount = 0;
+        if (status != null) {
+            if (status == AppointmentState.CANCELLED) {
+                statesParam = java.util.List.of(AppointmentState.CANCELLED.name(), AppointmentState.CANCELLED_BY_ADMIN.name());
+                statesCount = 2;
+            } else {
+                statesParam = java.util.List.of(status.name());
+                statesCount = 1;
+            }
+        }
+        String stateStr = (status != null && statesCount <= 1) ? status.name() : null;
+
+        Page<Appointment> appointmentPage;
+        if (statesCount > 1) {
+            appointmentPage = orderDesc
+                ? appointmentRepository.findByUserIdWithFiltersStatesInOrderByDateDesc(
+                    userId, statesParam, statesCount, adjustedFromDate, adjustedToDate, daysOfWeekParam, daysOfWeekCount, pageable)
+                : appointmentRepository.findByUserIdWithFiltersStatesIn(
+                    userId, statesParam, statesCount, adjustedFromDate, adjustedToDate, daysOfWeekParam, daysOfWeekCount, pageable);
+        } else {
+            appointmentPage = orderDesc
+                ? appointmentRepository.findByUserIdWithFiltersOrderByDateDesc(
+                    userId, stateStr, adjustedFromDate, adjustedToDate, daysOfWeekParam, daysOfWeekCount, pageable)
+                : appointmentRepository.findByUserIdWithFilters(
+                    userId, stateStr, adjustedFromDate, adjustedToDate, daysOfWeekParam, daysOfWeekCount, pageable);
+        }
 
         // 8. Si upcoming=true, filtrar en memoria para incluir solo turnos que aún no pasaron
         List<Appointment> filteredAppointments = appointmentPage.getContent();
@@ -2232,6 +2276,17 @@ public class AppointmentServiceImpl implements AppointmentService {
         response.setCalendarConfigVersion(appointment.getCalendarConfigVersion());
         response.setCreatedAt(appointment.getCreatedAt().toString());
         response.setUpdatedAt(appointment.getUpdatedAt().toString());
+
+        // Si el turno fue reprogramado (RESCHEDULED), incluir la nueva fecha del turno
+        if (appointment.getState() == AppointmentState.RESCHEDULED) {
+            appointmentRepository.findByPreviousAppointmentId(appointment.getId())
+                .ifPresent(next -> {
+                    response.setNextAppointmentId(next.getId());
+                    response.setNextAppointmentDate(next.getAppointmentDate().toString());
+                    response.setNextAppointmentStartTime(next.getStartTime().format(DateTimeFormatter.ofPattern("HH:mm")));
+                    response.setNextAppointmentEndTime(next.getEndTime().format(DateTimeFormatter.ofPattern("HH:mm")));
+                });
+        }
 
         // Obtener información del usuario
         Optional<User> user = userService.findById(appointment.getUserId());

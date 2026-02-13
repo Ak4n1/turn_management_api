@@ -16,6 +16,14 @@ public class UserMapper {
         response.setEmail(user.getEmail());
         response.setFirstName(user.getFirstName());
         response.setLastName(user.getLastName());
+        response.setPhone(user.getPhone());
+        response.setStreet(user.getStreet());
+        response.setStreetNumber(user.getStreetNumber());
+        response.setFloorApt(user.getFloorApt());
+        response.setCity(user.getCity());
+        response.setPostalCode(user.getPostalCode());
+        response.setBirthDate(user.getBirthDate());
+        response.setProfileComplete(user.isProfileComplete());
         response.setEnabled(user.getEnabled());
         response.setEmailVerified(user.getEmailVerified());
         response.setRoles(user.getRoles().stream()

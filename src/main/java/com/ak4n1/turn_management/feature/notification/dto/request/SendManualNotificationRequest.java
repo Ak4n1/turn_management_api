@@ -5,6 +5,8 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 
+import java.util.List;
+
 /**
  * DTO para solicitud de envío manual de notificaciones.
  * 
@@ -53,6 +55,11 @@ public class SendManualNotificationRequest {
      */
     private Priority priority = Priority.MEDIUM;
 
+    /**
+     * Lista de emails de usuarios a excluir cuando recipientType es ALL_USERS (opcional).
+     */
+    private List<String> excludedEmails;
+
     public RecipientType getRecipientType() {
         return recipientType;
     }
@@ -99,6 +106,14 @@ public class SendManualNotificationRequest {
 
     public void setPriority(Priority priority) {
         this.priority = priority;
+    }
+
+    public List<String> getExcludedEmails() {
+        return excludedEmails;
+    }
+
+    public void setExcludedEmails(List<String> excludedEmails) {
+        this.excludedEmails = excludedEmails;
     }
 }
 

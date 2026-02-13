@@ -48,6 +48,24 @@ public interface ConfigurationManagementService {
     CalendarConfiguration updateAppointmentDuration(CalendarConfiguration activeConfig, Integer durationMinutes, Long userId, String notes);
 
     /**
+     * Guarda la configuración completa (semanal + horarios diarios + duración) en una sola operación.
+     * Incrementa la versión una única vez. Debe invocarse dentro de una transacción tras validar todo.
+     *
+     * @param weeklyConfig      Configuración semanal
+     * @param dailyHoursList    Horarios diarios
+     * @param durationMinutes   Duración de turnos en minutos
+     * @param userId            ID del usuario que guarda
+     * @param notes             Notas opcionales
+     * @return Configuración guardada con versión +1
+     */
+    CalendarConfiguration createFullConfiguration(
+            WeeklyConfig weeklyConfig,
+            List<DailyHours> dailyHoursList,
+            Integer durationMinutes,
+            Long userId,
+            String notes);
+
+    /**
      * Obtiene la configuración activa del calendario.
      * 
      * @return Configuración activa o Optional vacío si no existe

@@ -2,6 +2,7 @@ package com.ak4n1.turn_management.feature.configuration.service;
 
 import com.ak4n1.turn_management.feature.configuration.dto.request.AppointmentDurationRequest;
 import com.ak4n1.turn_management.feature.configuration.dto.request.DailyHoursConfigRequest;
+import com.ak4n1.turn_management.feature.configuration.dto.request.FullConfigRequest;
 import com.ak4n1.turn_management.feature.configuration.dto.request.WeeklyConfigRequest;
 import com.ak4n1.turn_management.feature.configuration.dto.request.PreviewImpactRequest;
 import com.ak4n1.turn_management.feature.configuration.dto.response.AvailabilityRangeResponse;
@@ -69,6 +70,17 @@ public interface CalendarConfigurationService {
      * @throws IllegalArgumentException si la configuración es inválida
      */
     CalendarConfigurationResponse configureAppointmentDuration(AppointmentDurationRequest request, Long userId);
+
+    /**
+     * Guarda la configuración completa (semanal + horarios diarios + duración) en una sola operación atómica.
+     * Todas las validaciones se ejecutan antes de persistir; si alguna falla, no se guarda nada.
+     * La versión del sistema se incrementa en 1 (no en 3).
+     *
+     * @param request DTO con weeklyConfig, dailyHours y durationMinutes
+     * @param userId  ID del usuario que guarda
+     * @return Configuración guardada con la nueva versión
+     */
+    CalendarConfigurationResponse saveFullConfig(FullConfigRequest request, Long userId);
 
     /**
      * Obtiene la configuración activa actual.

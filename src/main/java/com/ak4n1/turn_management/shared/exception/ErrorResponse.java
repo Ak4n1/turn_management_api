@@ -1,6 +1,7 @@
 package com.ak4n1.turn_management.shared.exception;
 
 import java.time.LocalDateTime;
+import java.util.Map;
 
 public class ErrorResponse {
 
@@ -9,6 +10,7 @@ public class ErrorResponse {
     private String error;
     private String message;
     private String path;
+    private Map<String, String> errors;
 
     public ErrorResponse() {
         this.timestamp = LocalDateTime.now();
@@ -60,6 +62,14 @@ public class ErrorResponse {
 
     public void setPath(String path) {
         this.path = path;
+    }
+
+    public Map<String, String> getErrors() {
+        return errors;
+    }
+
+    public void setErrors(Map<String, String> errors) {
+        this.errors = errors;
     }
 }
 

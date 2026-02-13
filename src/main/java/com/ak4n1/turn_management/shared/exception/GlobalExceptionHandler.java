@@ -102,13 +102,18 @@ public class GlobalExceptionHandler {
             String errorMessage = error.getDefaultMessage();
             errors.put(fieldName, errorMessage);
         });
+        String firstMessage = errors.values().stream().findFirst().orElse("Error de validación");
+        if (errors.size() > 1) {
+            firstMessage = "Revisa los campos marcados. " + firstMessage;
+        }
 
         ErrorResponse errorResponse = new ErrorResponse(
                 HttpStatus.BAD_REQUEST.value(),
                 HttpStatus.BAD_REQUEST.getReasonPhrase(),
-                "Error de validación: " + errors.toString(),
+                firstMessage,
                 request.getRequestURI()
         );
+        errorResponse.setErrors(errors);
         return new ResponseEntity<>(errorResponse, HttpStatus.BAD_REQUEST);
     }
 

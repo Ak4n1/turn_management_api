@@ -8,6 +8,7 @@ import com.ak4n1.turn_management.feature.configuration.domain.WeeklyConfig;
 import com.ak4n1.turn_management.feature.configuration.dto.request.AppointmentDurationRequest;
 import com.ak4n1.turn_management.feature.configuration.dto.request.CalendarExceptionRequest;
 import com.ak4n1.turn_management.feature.configuration.dto.request.DailyHoursConfigRequest;
+import com.ak4n1.turn_management.feature.configuration.dto.request.FullConfigRequest;
 import com.ak4n1.turn_management.feature.configuration.dto.request.ManualBlockRequest;
 import com.ak4n1.turn_management.feature.configuration.dto.request.PreviewImpactRequest;
 import com.ak4n1.turn_management.feature.configuration.dto.request.WeeklyConfigRequest;
@@ -494,6 +495,177 @@ public class CalendarConfigurationServiceImpl implements CalendarConfigurationSe
     }
 
     @Override
+    @Transactional
+    public CalendarConfigurationResponse saveFullConfig(FullConfigRequest request, Long userId) {
+        logger.info("Guardando configuración completa (atómico) - Usuario: {}", userId);
+
+        // 1. Validar y mapear configuración semanal
+        weeklyConfigValidator.validate(request.getWeeklyConfig());
+        WeeklyConfig weeklyConfig = mapper.toWeeklyConfig(request.getWeeklyConfig());
+        weeklyConfigValidator.validateDomain(weeklyConfig);
+
+        // 2. Validar y mapear horarios diarios (pueden ser vacíos si todos los días están cerrados)
+        List<DailyHours> dailyHoursList = new ArrayList<>();
+        if (request.getDailyHours() != null && request.getDailyHours().getDailyHours() != null
+                && !request.getDailyHours().getDailyHours().isEmpty()) {
+            dailyHoursValidator.validate(request.getDailyHours());
+            dailyHoursList = mapper.toDailyHoursList(request.getDailyHours());
+            dailyHoursValidator.validateOnlyOpenDaysHaveHours(dailyHoursList, weeklyConfig);
+            dailyHoursValidator.validateNoOverlaps(dailyHoursList);
+            dailyHoursValidator.validateTimeRanges(dailyHoursList);
+        }
+
+        // 3. Validar duración (obligatoria) y compatibilidad con rangos
+        if (request.getDurationMinutes() == null) {
+            throw new ApiException("La duración del turno es obligatoria", HttpStatus.BAD_REQUEST);
+        }
+        AppointmentDurationRequest durationRequest = new AppointmentDurationRequest(
+                request.getDurationMinutes(),
+                request.getNotes());
+        appointmentDurationValidator.validateRequest(durationRequest);
+        if (request.getDurationMinutes() % 15 != 0) {
+            throw new ApiException(
+                    "La duración debe ser divisible por 15 minutos. Ejemplos válidos: 15, 30, 45, 60, 90, 120, etc.",
+                    HttpStatus.BAD_REQUEST);
+        }
+        appointmentDurationValidator.validateDurationCompatibility(request.getDurationMinutes(), dailyHoursList);
+
+        // 4. Guardar en una sola operación (una sola versión +1)
+        String notes = request.getNotes() != null ? request.getNotes() : "Configuración completa (semanal, horarios, duración)";
+        CalendarConfiguration saved = configurationManagementService.createFullConfiguration(
+                weeklyConfig,
+                dailyHoursList,
+                request.getDurationMinutes(),
+                userId,
+                notes);
+
+        logger.info("Configuración completa guardada - ID: {}, Versión: {}", saved.getId(), saved.getVersion());
+
+        // 5. Notificaciones a admins y broadcast
+        try {
+            webSocketNotificationService.sendNotificationToAdmins(
+                    NotificationType.CALENDAR_CONFIGURATION_CHANGED,
+                    "Configuración de Calendario Actualizada",
+                    String.format("Se ha actualizado la configuración completa (Versión %d). Revisa el impacto en turnos existentes.", saved.getVersion()),
+                    RelatedEntityType.CALENDAR_CONFIGURATION,
+                    saved.getId());
+        } catch (Exception e) {
+            logger.error("Error al enviar notificación WebSocket de cambio de configuración: {}", e.getMessage(), e);
+        }
+        try {
+            java.util.Map<String, Object> additionalData = new java.util.HashMap<>();
+            additionalData.put("configurationVersion", saved.getVersion());
+            additionalData.put("durationMinutes", saved.getAppointmentDurationMinutes());
+            webSocketNotificationService.broadcastGeneralAvailabilityUpdate(
+                    String.format("La configuración del calendario ha cambiado (Versión %d). Por favor, actualiza la vista de disponibilidad.", saved.getVersion()),
+                    additionalData);
+        } catch (Exception e) {
+            logger.error("Error al enviar actualización general de disponibilidad WebSocket: {}", e.getMessage(), e);
+        }
+
+        // 6. Procesar turnos afectados (mismo flujo que createWeeklyConfig)
+        try {
+            WeeklyConfigRequest weeklyReq = request.getWeeklyConfig();
+            java.util.List<Long> appointmentIdsToCancel = weeklyReq != null ? weeklyReq.getAppointmentIdsToCancel() : null;
+            Boolean autoCancel = weeklyReq != null && Boolean.TRUE.equals(weeklyReq.getAutoCancelAffectedAppointments());
+            String cancellationReason = weeklyReq != null ? weeklyReq.getCancellationReason() : null;
+
+            if (cancellationReason == null || cancellationReason.trim().isEmpty()) {
+                cancellationReason = "Día cerrado según nueva configuración";
+            }
+
+            if (appointmentIdsToCancel == null || appointmentIdsToCancel.isEmpty()) {
+                return mapper.toResponse(saved);
+            }
+
+            logger.info("Procesando {} turno(s) afectado(s) - AutoCancel: {}", appointmentIdsToCancel.size(), autoCancel);
+
+            List<com.ak4n1.turn_management.feature.appointment.domain.Appointment> affectedAppointments = appointmentRepository
+                    .findAllById(appointmentIdsToCancel)
+                    .stream()
+                    .filter(a -> a.getState() == AppointmentState.CREATED || a.getState() == AppointmentState.CONFIRMED)
+                    .collect(Collectors.toList());
+
+            if (affectedAppointments.isEmpty()) {
+                return mapper.toResponse(saved);
+            }
+
+            java.util.Map<Long, java.util.List<com.ak4n1.turn_management.feature.appointment.dto.response.UserAffectedAppointmentInfo>> userAffectedAppointments = new java.util.HashMap<>();
+            java.util.List<com.ak4n1.turn_management.feature.appointment.domain.Appointment> appointmentsToCancel = new java.util.ArrayList<>();
+
+            for (com.ak4n1.turn_management.feature.appointment.domain.Appointment appointment : affectedAppointments) {
+                Long affectedUserId = appointment.getUserId();
+                userAffectedAppointments.computeIfAbsent(affectedUserId, k -> new java.util.ArrayList<>())
+                        .add(new com.ak4n1.turn_management.feature.appointment.dto.response.UserAffectedAppointmentInfo(
+                                appointment.getId(),
+                                appointment.getAppointmentDate(),
+                                appointment.getStartTime().toString(),
+                                appointment.getEndTime().toString()));
+
+                if (autoCancel) {
+                    appointmentsToCancel.add(appointment);
+                }
+            }
+
+            if (autoCancel && !appointmentsToCancel.isEmpty()) {
+                appointmentCancellationService.cancelAffectedAppointmentsByDayClosure(appointmentsToCancel, userId, cancellationReason);
+            }
+
+            java.util.Set<Long> affectedUserIds = userAffectedAppointments.keySet();
+            java.util.Map<Long, User> usersMap = new java.util.HashMap<>();
+            if (!affectedUserIds.isEmpty()) {
+                List<User> affectedUsers = userRepository.findAllById(affectedUserIds);
+                for (User user : affectedUsers) {
+                    usersMap.put(user.getId(), user);
+                }
+            }
+
+            for (java.util.Map.Entry<Long, java.util.List<com.ak4n1.turn_management.feature.appointment.dto.response.UserAffectedAppointmentInfo>> entry : userAffectedAppointments.entrySet()) {
+                try {
+                    Long affectedUserId = entry.getKey();
+                    java.util.List<com.ak4n1.turn_management.feature.appointment.dto.response.UserAffectedAppointmentInfo> appointments = entry.getValue();
+                    User affectedUser = usersMap.get(affectedUserId);
+                    if (affectedUser == null) continue;
+
+                    if (autoCancel) {
+                        emailService.sendMassCancellationEmail(affectedUser, appointments, cancellationReason);
+                        String message = appointments.size() == 1
+                                ? String.format("Tu turno para el %s a las %s ha sido cancelado. Motivo: %s.", appointments.get(0).getDate(), appointments.get(0).getStartTime(), cancellationReason)
+                                : String.format("Tus %d turno(s) han sido cancelados. Motivo: %s.", appointments.size(), cancellationReason);
+                        webSocketNotificationService.sendNotificationToUser(
+                                affectedUser.getId(),
+                                NotificationType.APPOINTMENT_CANCELLED_BY_ADMIN,
+                                appointments.size() == 1 ? "Turno Cancelado" : "Turnos Cancelados",
+                                message,
+                                RelatedEntityType.APPOINTMENT,
+                                appointments.get(0).getAppointmentId(),
+                                appointments.get(0).getAppointmentId());
+                    } else {
+                        emailService.sendDaysClosedNotificationEmail(affectedUser, appointments);
+                        String message = appointments.size() == 1
+                                ? String.format("El día %s ha sido cerrado según la nueva configuración, pero tu turno a las %s seguirá siendo válido.", appointments.get(0).getDate(), appointments.get(0).getStartTime())
+                                : String.format("Se han cerrado días según la nueva configuración, pero tus %d turno(s) siguen siendo válidos.", appointments.size());
+                        webSocketNotificationService.sendNotificationToUser(
+                                affectedUser.getId(),
+                                NotificationType.DAY_CLOSED_WITH_APPOINTMENT,
+                                appointments.size() == 1 ? "Día Cerrado - Turno Afectado" : "Días Cerrados - Turnos Afectados",
+                                message,
+                                RelatedEntityType.APPOINTMENT,
+                                appointments.get(0).getAppointmentId(),
+                                appointments.get(0).getAppointmentId());
+                    }
+                } catch (Exception e) {
+                    logger.error("Error al enviar notificación - Usuario ID: {}, Error: {}", entry.getKey(), e.getMessage(), e);
+                }
+            }
+        } catch (Exception e) {
+            logger.error("Error al procesar turnos afectados: {}", e.getMessage(), e);
+        }
+
+        return mapper.toResponse(saved);
+    }
+
+    @Override
     @Transactional(readOnly = true)
     public ConsolidatedCalendarResponse getConsolidatedCalendar(LocalDate startDate, LocalDate endDate) {
         logger.info("Solicitud de calendario consolidado - Rango: {} a {}", startDate, endDate);
@@ -743,8 +915,11 @@ public class CalendarConfigurationServiceImpl implements CalendarConfigurationSe
                         allSlots.addAll(slotsFromRange);
                     }
 
+                    // Excluir slots ocupados por turnos existentes (igual que /slots)
+                    List<SlotResponse> slotsWithOccupancy = slotGenerationService.excludeOccupiedSlots(allSlots, currentDate);
+
                     totalSlots = allSlots.size();
-                    availableSlots = (int) allSlots.stream()
+                    availableSlots = (int) slotsWithOccupancy.stream()
                             .filter(SlotResponse::getAvailable)
                             .count();
 

@@ -39,6 +39,13 @@ public interface SystemNotificationRepository extends JpaRepository<SystemNotifi
     long countByRecipientIdAndReadFalse(Long recipientId);
 
     /**
+     * Cuenta las notificaciones no leídas de un usuario excluyendo un tipo
+     * (ej. para no contar APPOINTMENT_CREATED en el badge de la campanita).
+     */
+    @Query("SELECT COUNT(n) FROM SystemNotification n WHERE n.recipientId = :recipientId AND n.read = false AND n.type <> :excludeType")
+    long countByRecipientIdAndReadFalseAndTypeNot(@Param("recipientId") Long recipientId, @Param("excludeType") NotificationType excludeType);
+
+    /**
      * Cuenta todas las notificaciones no leídas del sistema (para admin).
      * Implementa US-N006.
      */

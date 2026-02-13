@@ -20,5 +20,9 @@ public interface AuthService {
     ResetPasswordResponse resetPassword(String token, ResetPasswordRequest request);
 
     void resendVerificationEmail(String email);
+
+    UserResponse getProfile(Long userId);
+
+    UserResponse updateProfile(Long userId, UpdateProfileRequest request);
 }
 

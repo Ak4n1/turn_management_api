@@ -68,7 +68,9 @@ public class AdminManualNotificationController {
                 request.getRecipientEmail(),
                 request.getType(),
                 request.getTitle(),
-                request.getMessage()
+                request.getMessage(),
+                adminId,
+                request.getExcludedEmails()
             );
 
             logger.info("Notificación manual enviada exitosamente por admin {} - Total destinatarios: {}, Enviadas inmediatamente: {}",

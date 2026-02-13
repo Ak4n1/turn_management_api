@@ -114,64 +114,8 @@ public class ManualBlockServiceImpl implements ManualBlockService {
         logger.info("Bloqueo operativo creado exitosamente - ID: {}, Fecha: {}, Turnos afectados: {}", 
             saved.getId(), saved.getBlockDate(), affectedAppointments.size());
 
-        // 9. Notificar a usuarios afectados y admins
-        try {
-            // Notificar a admins
-            webSocketNotificationService.sendNotificationToAdmins(
-                NotificationType.BLOCK_CREATED,
-                "Bloqueo Operativo Creado",
-                String.format("Se ha creado un bloqueo operativo para el %s (%s). Turnos afectados: %d", 
-                    saved.getBlockDate(), 
-                    saved.getIsFullDay() ? "día completo" : "rango horario",
-                    affectedAppointments.size()),
-                RelatedEntityType.MANUAL_BLOCK,
-                saved.getId()
-            );
-
-            // Notificar por WebSocket a usuarios con turnos afectados (si no se procesan por cancelar/notificar con email)
-            java.util.List<Long> idsToProcess = request.getAppointmentIdsToCancel();
-            if (idsToProcess == null || idsToProcess.isEmpty()) {
-                if (!affectedAppointments.isEmpty()) {
-                    List<com.ak4n1.turn_management.feature.appointment.domain.AppointmentState> activeStates =
-                            List.of(
-                                    com.ak4n1.turn_management.feature.appointment.domain.AppointmentState.CREATED,
-                                    com.ak4n1.turn_management.feature.appointment.domain.AppointmentState.CONFIRMED
-                            );
-                    List<com.ak4n1.turn_management.feature.appointment.domain.Appointment> affectedAppointmentsList =
-                            appointmentRepository.findByDateAndStateIn(saved.getBlockDate(), activeStates);
-                    if (!saved.getIsFullDay() && saved.getTimeRange() != null) {
-                        try {
-                            java.time.LocalTime blockStart = java.time.LocalTime.parse(saved.getTimeRange().getStart(),
-                                    java.time.format.DateTimeFormatter.ofPattern("HH:mm"));
-                            java.time.LocalTime blockEnd = java.time.LocalTime.parse(saved.getTimeRange().getEnd(),
-                                    java.time.format.DateTimeFormatter.ofPattern("HH:mm"));
-                            affectedAppointmentsList = affectedAppointmentsList.stream()
-                                    .filter(a -> {
-                                        java.time.LocalTime appointmentStart = a.getStartTime();
-                                        return !appointmentStart.isBefore(blockStart) && appointmentStart.isBefore(blockEnd);
-                                    })
-                                    .collect(java.util.stream.Collectors.toList());
-                        } catch (Exception ex) {
-                            logger.warn("Error al filtrar turnos por rango horario: {}", ex.getMessage());
-                        }
-                    }
-                    for (var appointment : affectedAppointmentsList) {
-                        webSocketNotificationService.sendNotificationToUser(
-                                appointment.getUserId(),
-                                NotificationType.BLOCK_CREATED,
-                                "Bloqueo Operativo - Turno Afectado",
-                                String.format("Se ha creado un bloqueo operativo para el %s que afecta tu turno del %s a las %s. Por favor, contacta con el administrador.",
-                                        saved.getBlockDate(), appointment.getAppointmentDate(), appointment.getStartTime()),
-                                RelatedEntityType.APPOINTMENT,
-                                appointment.getId(),
-                                appointment.getId()
-                        );
-                    }
-                }
-            }
-        } catch (Exception e) {
-            logger.error("Error al enviar notificaciones WebSocket de bloqueo: {}", e.getMessage(), e);
-        }
+        // 9. (Campanita) Se elimina la notificación de plataforma por creación de bloqueo.
+        // Se mantienen: cancelaciones/emails y actualización de disponibilidad (más abajo).
 
         // Procesar turnos afectados: cancelar o solo notificar por email (igual que reglas de atención)
         try {
@@ -243,18 +187,6 @@ public class ManualBlockServiceImpl implements ManualBlockService {
                                 appointments.get(0).getAppointmentId());
                     } else {
                         emailService.sendDaysClosedNotificationEmail(affectedUser, appointments);
-                        String message = appointments.size() == 1
-                                ? String.format("Se ha creado un bloqueo operativo para el %s que afecta tu turno a las %s. Tu turno sigue vigente por ahora; si necesitas reprogramar, contacta al administrador.",
-                                        saved.getBlockDate(), appointments.get(0).getStartTime())
-                                : String.format("Se ha creado un bloqueo operativo que afecta %d de tus turnos. Siguen vigentes; si necesitas reprogramar, contacta al administrador.", appointments.size());
-                        webSocketNotificationService.sendNotificationToUser(
-                                affectedUser.getId(),
-                                NotificationType.BLOCK_CREATED,
-                                "Bloqueo - Turno(s) Afectado(s)",
-                                message,
-                                RelatedEntityType.APPOINTMENT,
-                                appointments.get(0).getAppointmentId(),
-                                appointments.get(0).getAppointmentId());
                     }
                 } catch (Exception e) {
                     logger.error("Error al enviar notificación/email por bloqueo - Usuario ID: {}, Error: {}", entry.getKey(), e.getMessage(), e);

@@ -22,7 +22,7 @@ public class SystemNotification {
      * Tipo de notificación.
      */
     @Enumerated(EnumType.STRING)
-    @Column(name = "type", nullable = false)
+    @Column(name = "type", nullable = false, length = 64)
     private NotificationType type;
 
     /**
@@ -47,7 +47,7 @@ public class SystemNotification {
      * Tipo de entidad relacionada (ej: RESCHEDULE_REQUEST, APPOINTMENT, etc.).
      */
     @Enumerated(EnumType.STRING)
-    @Column(name = "related_entity_type")
+    @Column(name = "related_entity_type", length = 64)
     private RelatedEntityType relatedEntityType;
 
     /**

@@ -61,12 +61,15 @@ public class WebSocketNotificationService {
                                       RelatedEntityType relatedEntityType, Long relatedEntityId,
                                       Long appointmentId) {
         try {
-            // Verificar preferencias de notificación WebSocket
-            boolean shouldSend = preferenceService.shouldReceiveNotification(userId, type);
-            if (!shouldSend) {
-                logger.info("Notificación WebSocket omitida para usuario {} (tipo {}) debido a preferencias del usuario.",
-                    userId, type);
-                return;
+            // RESCHEDULE_REQUEST_PENDING: notificación solo en plataforma para admins, siempre (no configurable por preferencias)
+            boolean skipPreferenceCheck = (type == NotificationType.RESCHEDULE_REQUEST_PENDING);
+            if (!skipPreferenceCheck) {
+                boolean shouldSend = preferenceService.shouldReceiveNotification(userId, type);
+                if (!shouldSend) {
+                    logger.info("Notificación WebSocket omitida para usuario {} (tipo {}) debido a preferencias del usuario.",
+                        userId, type);
+                    return;
+                }
             }
 
             // Obtener usuario para obtener su email
@@ -79,9 +82,17 @@ public class WebSocketNotificationService {
             User user = userOpt.get();
             String userEmail = user.getEmail();
 
-            // Crear notificación en BD
-            SystemNotification notification = notificationService.createNotification(
-                type, userId, title, message, relatedEntityType, relatedEntityId);
+            // RESCHEDULE_REQUEST_PENDING: la notificación ya se creó en BD en el flujo del appointment; solo enviamos WebSocket
+            long unreadCount;
+            Long notificationId = null;
+            if (type == NotificationType.RESCHEDULE_REQUEST_PENDING) {
+                unreadCount = notificationService.countUnreadNotifications(userId);
+            } else {
+                SystemNotification notification = notificationService.createNotification(
+                    type, userId, title, message, relatedEntityType, relatedEntityId);
+                notificationId = notification.getId();
+                unreadCount = notificationService.countUnreadNotifications(userId);
+            }
 
             // Enviar vía WebSocket
             WebSocketMessage wsMessage = new WebSocketMessage();
@@ -91,21 +102,19 @@ public class WebSocketNotificationService {
             if (appointmentId != null) {
                 wsMessage.setAppointmentId(appointmentId);
             }
-
-            // Agregar datos adicionales
             Map<String, Object> data = new HashMap<>();
-            data.put("notificationId", notification.getId());
+            if (notificationId != null) {
+                data.put("notificationId", notificationId);
+            }
             data.put("type", type.name());
             data.put("relatedEntityType", relatedEntityType != null ? relatedEntityType.name() : null);
             data.put("relatedEntityId", relatedEntityId);
-            data.put("unreadCount", notificationService.countUnreadNotifications(userId));
+            data.put("unreadCount", unreadCount);
             wsMessage.setData(data);
 
-            // Enviar a todas las sesiones del usuario
             webSocketHandler.sendMessageToUser(userEmail, wsMessage);
 
-            logger.info("Notificación enviada vía WebSocket - Usuario: {}, Tipo: {}, ID: {}", 
-                userEmail, type, notification.getId());
+            logger.info("Notificación enviada vía WebSocket - Usuario: {}, Tipo: {}", userEmail, type);
 
         } catch (Exception e) {
             // No lanzar excepción - las notificaciones no deben bloquear operaciones principales

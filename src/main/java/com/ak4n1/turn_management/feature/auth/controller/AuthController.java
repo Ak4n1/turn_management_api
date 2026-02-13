@@ -12,6 +12,7 @@ import com.ak4n1.turn_management.feature.auth.service.AuthService;
 import com.ak4n1.turn_management.feature.auth.service.AuthResult;
 import com.ak4n1.turn_management.feature.notification.service.EmailVerificationService;
 import com.ak4n1.turn_management.shared.config.CookieConfig;
+import com.ak4n1.turn_management.shared.security.jwt.JwtTokenProvider;
 import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -27,11 +28,15 @@ public class AuthController {
     private final AuthService authService;
     private final CookieConfig cookieConfig;
     private final EmailVerificationService emailVerificationService;
+    private final JwtTokenProvider jwtTokenProvider;
 
-    public AuthController(AuthService authService, CookieConfig cookieConfig, EmailVerificationService emailVerificationService) {
+    public AuthController(AuthService authService, CookieConfig cookieConfig,
+                          EmailVerificationService emailVerificationService,
+                          JwtTokenProvider jwtTokenProvider) {
         this.authService = authService;
         this.cookieConfig = cookieConfig;
         this.emailVerificationService = emailVerificationService;
+        this.jwtTokenProvider = jwtTokenProvider;
     }
 
     @PostMapping("/login")
@@ -113,6 +118,52 @@ public class AuthController {
         authService.resendVerificationEmail(email);
         ResendVerificationResponse response = new ResendVerificationResponse(200, "Se ha reenviado el email de verificación. Por favor, revisa tu bandeja de entrada.");
         return ResponseEntity.ok(response);
+    }
+
+    @GetMapping("/me")
+    public ResponseEntity<UserResponse> getProfile(HttpServletRequest request) {
+        Long userId = getCurrentUserId(request);
+        UserResponse user = authService.getProfile(userId);
+        return ResponseEntity.ok(user);
+    }
+
+    @PatchMapping("/me")
+    public ResponseEntity<UserResponse> updateProfile(
+            HttpServletRequest request,
+            @Valid @RequestBody UpdateProfileRequest body) {
+        Long userId = getCurrentUserId(request);
+        UserResponse user = authService.updateProfile(userId, body);
+        return ResponseEntity.ok(user);
+    }
+
+    private Long getCurrentUserId(HttpServletRequest request) {
+        String token = getAccessTokenFromCookie(request);
+        if (token == null) {
+            String authHeader = request.getHeader("Authorization");
+            if (authHeader != null && authHeader.startsWith("Bearer ")) {
+                token = authHeader.substring(7);
+            }
+        }
+        if (token == null) {
+            throw new IllegalArgumentException("No se pudo obtener el token de autenticación");
+        }
+        Long userId = jwtTokenProvider.extractUserId(token);
+        if (userId == null) {
+            throw new IllegalArgumentException("Token inválido");
+        }
+        return userId;
+    }
+
+    private String getAccessTokenFromCookie(HttpServletRequest request) {
+        Cookie[] cookies = request.getCookies();
+        if (cookies != null) {
+            for (Cookie cookie : cookies) {
+                if ("accessToken".equals(cookie.getName())) {
+                    return cookie.getValue();
+                }
+            }
+        }
+        return null;
     }
 
     private void setAccessTokenCookie(HttpServletResponse response, String accessToken) {

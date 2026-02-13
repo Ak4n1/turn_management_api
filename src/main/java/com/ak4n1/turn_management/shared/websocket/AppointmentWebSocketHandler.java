@@ -96,6 +96,8 @@ public class AppointmentWebSocketHandler extends TextWebSocketHandler {
 
         logger.info("✅ [WebSocket] Connection registered - sessionId: {}, user: {}, totalActiveSessions: {}, userSessions: {}", 
                 sessionId, userEmail, activeSessions.size(), sessionsByUser.get(userEmail).size());
+
+        broadcastOnlineUsersCount();
     }
 
     @Override
@@ -315,6 +317,58 @@ public class AppointmentWebSocketHandler extends TextWebSocketHandler {
 
         // Decrementar contador de conexiones activas
         securityValidator.decrementActiveConnections(userEmail);
+
+        broadcastOnlineUsersCount();
+    }
+
+    /**
+     * Retorna el número de usuarios únicos conectados vía WebSocket.
+     */
+    public int getOnlineUsersCount() {
+        return sessionsByUser.size();
+    }
+
+    /**
+     * Retorna los emails de usuarios actualmente conectados vía WebSocket.
+     */
+    public java.util.List<String> getOnlineUserEmails() {
+        return new ArrayList<>(sessionsByUser.keySet());
+    }
+
+    /**
+     * Emite el conteo y lista de usuarios en línea solo a sesiones con rol admin.
+     */
+    public void broadcastOnlineUsersCount() {
+        WebSocketMessage message = new WebSocketMessage();
+        message.setType(WebSocketMessageType.ONLINE_USERS_COUNT);
+        message.setData(Map.of(
+                "onlineUsersCount", getOnlineUsersCount(),
+                "onlineUserEmails", getOnlineUserEmails()));
+        broadcastToAdminsOnly(message);
+    }
+
+    /**
+     * Envía un mensaje solo a las sesiones cuyo usuario tiene rol admin.
+     */
+    private void broadcastToAdminsOnly(WebSocketMessage message) {
+        int successCount = 0;
+        for (Map.Entry<String, WebSocketSession> entry : activeSessions.entrySet()) {
+            Boolean isAdmin = (Boolean) entry.getValue().getAttributes().get("isAdmin");
+            if (!Boolean.TRUE.equals(isAdmin)) {
+                continue;
+            }
+            WebSocketSession wsSession = entry.getValue();
+            if (wsSession != null && wsSession.isOpen()) {
+                try {
+                    String json = objectMapper.writeValueAsString(message);
+                    wsSession.sendMessage(new TextMessage(json));
+                    successCount++;
+                } catch (Exception e) {
+                    logger.error("Error sending to admin session {}: {}", entry.getKey(), e.getMessage());
+                }
+            }
+        }
+        logger.debug("📢 [WebSocket] ONLINE_USERS_COUNT sent to {} admin session(s)", successCount);
     }
 
     /**

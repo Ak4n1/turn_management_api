@@ -6,6 +6,7 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 import org.hibernate.annotations.CreationTimestamp;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.HashSet;
 import java.util.Set;
@@ -42,6 +43,33 @@ public class User {
     @Size(max = 50)
     @Column(name = "last_name", nullable = false, length = 50)
     private String lastName;
+
+    @Size(max = 30)
+    @Column(length = 30)
+    private String phone;
+
+    @Size(max = 100)
+    @Column(length = 100)
+    private String street;
+
+    @Size(max = 20)
+    @Column(name = "street_number", length = 20)
+    private String streetNumber;
+
+    @Size(max = 20)
+    @Column(name = "floor_apt", length = 20)
+    private String floorApt;
+
+    @Size(max = 80)
+    @Column(length = 80)
+    private String city;
+
+    @Size(max = 20)
+    @Column(name = "postal_code", length = 20)
+    private String postalCode;
+
+    @Column(name = "birth_date")
+    private LocalDate birthDate;
 
     @Column(nullable = false)
     private Boolean enabled = true;
@@ -119,6 +147,62 @@ public class User {
         this.lastName = lastName;
     }
 
+    public String getPhone() {
+        return phone;
+    }
+
+    public void setPhone(String phone) {
+        this.phone = phone;
+    }
+
+    public String getStreet() {
+        return street;
+    }
+
+    public void setStreet(String street) {
+        this.street = street;
+    }
+
+    public String getStreetNumber() {
+        return streetNumber;
+    }
+
+    public void setStreetNumber(String streetNumber) {
+        this.streetNumber = streetNumber;
+    }
+
+    public String getFloorApt() {
+        return floorApt;
+    }
+
+    public void setFloorApt(String floorApt) {
+        this.floorApt = floorApt;
+    }
+
+    public String getCity() {
+        return city;
+    }
+
+    public void setCity(String city) {
+        this.city = city;
+    }
+
+    public String getPostalCode() {
+        return postalCode;
+    }
+
+    public void setPostalCode(String postalCode) {
+        this.postalCode = postalCode;
+    }
+
+    public LocalDate getBirthDate() {
+        return birthDate;
+    }
+
+    public void setBirthDate(LocalDate birthDate) {
+        this.birthDate = birthDate;
+    }
+
     public Boolean getEnabled() {
         return enabled;
     }
@@ -181,6 +265,27 @@ public class User {
 
     public void setEmailVerified(Boolean emailVerified) {
         this.emailVerified = emailVerified;
+    }
+
+    /**
+     * Perfil completo para poder pedir turno:
+     * teléfono, calle, número, piso/depto, ciudad, código postal y fecha de nacimiento.
+     *
+     * Es un dato derivado (no se persiste).
+     */
+    @Transient
+    public boolean isProfileComplete() {
+        return hasText(phone)
+            && hasText(street)
+            && hasText(streetNumber)
+            && hasText(floorApt)
+            && hasText(city)
+            && hasText(postalCode)
+            && birthDate != null;
+    }
+
+    private boolean hasText(String value) {
+        return value != null && !value.trim().isEmpty();
     }
 }
 

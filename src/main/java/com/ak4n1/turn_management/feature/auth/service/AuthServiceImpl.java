@@ -121,6 +121,13 @@ public class AuthServiceImpl implements AuthService {
         user.setPassword(passwordService.encodePassword(request.getPassword()));
         user.setFirstName(request.getFirstName());
         user.setLastName(request.getLastName());
+        if (request.getPhone() != null) user.setPhone(request.getPhone());
+        if (request.getStreet() != null) user.setStreet(request.getStreet());
+        if (request.getStreetNumber() != null) user.setStreetNumber(request.getStreetNumber());
+        if (request.getFloorApt() != null) user.setFloorApt(request.getFloorApt());
+        if (request.getCity() != null) user.setCity(request.getCity());
+        if (request.getPostalCode() != null) user.setPostalCode(request.getPostalCode());
+        if (request.getBirthDate() != null) user.setBirthDate(request.getBirthDate());
         user.setEnabled(true);
         user.setAccountNonLocked(true);
 
@@ -385,6 +392,31 @@ public class AuthServiceImpl implements AuthService {
         refreshTokenRepository.save(currentToken);
 
         return newToken;
+    }
+
+    @Override
+    public UserResponse getProfile(Long userId) {
+        User user = userService.findById(userId)
+                .orElseThrow(() -> new IllegalArgumentException("Usuario no encontrado"));
+        return userMapper.toUserResponse(user);
+    }
+
+    @Override
+    @Transactional
+    public UserResponse updateProfile(Long userId, UpdateProfileRequest request) {
+        User user = userService.findById(userId)
+                .orElseThrow(() -> new IllegalArgumentException("Usuario no encontrado"));
+        if (request.getFirstName() != null && !request.getFirstName().isBlank()) user.setFirstName(request.getFirstName().trim());
+        if (request.getLastName() != null && !request.getLastName().isBlank()) user.setLastName(request.getLastName().trim());
+        if (request.getPhone() != null) user.setPhone(request.getPhone().trim().isEmpty() ? null : request.getPhone().trim());
+        if (request.getStreet() != null) user.setStreet(request.getStreet().trim().isEmpty() ? null : request.getStreet().trim());
+        if (request.getStreetNumber() != null) user.setStreetNumber(request.getStreetNumber().trim().isEmpty() ? null : request.getStreetNumber().trim());
+        if (request.getFloorApt() != null) user.setFloorApt(request.getFloorApt().trim().isEmpty() ? null : request.getFloorApt().trim());
+        if (request.getCity() != null) user.setCity(request.getCity().trim().isEmpty() ? null : request.getCity().trim());
+        if (request.getPostalCode() != null) user.setPostalCode(request.getPostalCode().trim().isEmpty() ? null : request.getPostalCode().trim());
+        if (request.getBirthDate() != null) user.setBirthDate(request.getBirthDate());
+        user = userService.save(user);
+        return userMapper.toUserResponse(user);
     }
 }
 

@@ -211,6 +211,81 @@ public interface AppointmentRepository extends JpaRepository<Appointment, Long> 
             Pageable pageable);
 
     /**
+     * Busca turnos del usuario con filtros y estado en una lista (ej. CANCELLED + CANCELLED_BY_ADMIN).
+     * @param states Lista de estados (vacía o null = no filtrar por estado)
+     */
+    @Query(value = "SELECT * FROM appointments a WHERE a.user_id = :userId " +
+           "AND (:statesCount = 0 OR a.state IN (:states)) " +
+           "AND (:fromDate IS NULL OR a.appointment_date >= :fromDate) " +
+           "AND (:toDate IS NULL OR a.appointment_date <= :toDate) " +
+           "AND (:daysOfWeekCount = 0 OR a.day_of_week IN (:daysOfWeek)) " +
+           "ORDER BY a.appointment_date ASC, a.start_time ASC",
+           countQuery = "SELECT COUNT(*) FROM appointments a WHERE a.user_id = :userId " +
+           "AND (:statesCount = 0 OR a.state IN (:states)) " +
+           "AND (:fromDate IS NULL OR a.appointment_date >= :fromDate) " +
+           "AND (:toDate IS NULL OR a.appointment_date <= :toDate) " +
+           "AND (:daysOfWeekCount = 0 OR a.day_of_week IN (:daysOfWeek))",
+           nativeQuery = true)
+    Page<Appointment> findByUserIdWithFiltersStatesIn(
+            @Param("userId") Long userId,
+            @Param("states") java.util.List<String> states,
+            @Param("statesCount") int statesCount,
+            @Param("fromDate") LocalDate fromDate,
+            @Param("toDate") LocalDate toDate,
+            @Param("daysOfWeek") java.util.List<Integer> daysOfWeek,
+            @Param("daysOfWeekCount") int daysOfWeekCount,
+            Pageable pageable);
+
+    /**
+     * Igual que findByUserIdWithFiltersStatesIn pero ordenado por fecha descendente.
+     */
+    @Query(value = "SELECT * FROM appointments a WHERE a.user_id = :userId " +
+           "AND (:statesCount = 0 OR a.state IN (:states)) " +
+           "AND (:fromDate IS NULL OR a.appointment_date >= :fromDate) " +
+           "AND (:toDate IS NULL OR a.appointment_date <= :toDate) " +
+           "AND (:daysOfWeekCount = 0 OR a.day_of_week IN (:daysOfWeek)) " +
+           "ORDER BY a.appointment_date DESC, a.start_time DESC",
+           countQuery = "SELECT COUNT(*) FROM appointments a WHERE a.user_id = :userId " +
+           "AND (:statesCount = 0 OR a.state IN (:states)) " +
+           "AND (:fromDate IS NULL OR a.appointment_date >= :fromDate) " +
+           "AND (:toDate IS NULL OR a.appointment_date <= :toDate) " +
+           "AND (:daysOfWeekCount = 0 OR a.day_of_week IN (:daysOfWeek))",
+           nativeQuery = true)
+    Page<Appointment> findByUserIdWithFiltersStatesInOrderByDateDesc(
+            @Param("userId") Long userId,
+            @Param("states") java.util.List<String> states,
+            @Param("statesCount") int statesCount,
+            @Param("fromDate") LocalDate fromDate,
+            @Param("toDate") LocalDate toDate,
+            @Param("daysOfWeek") java.util.List<Integer> daysOfWeek,
+            @Param("daysOfWeekCount") int daysOfWeekCount,
+            Pageable pageable);
+
+    /**
+     * Igual que findByUserIdWithFilters pero ordenado por fecha descendente (más recientes primero).
+     */
+    @Query(value = "SELECT * FROM appointments a WHERE a.user_id = :userId " +
+           "AND (:state IS NULL OR a.state = :state) " +
+           "AND (:fromDate IS NULL OR a.appointment_date >= :fromDate) " +
+           "AND (:toDate IS NULL OR a.appointment_date <= :toDate) " +
+           "AND (:daysOfWeekCount = 0 OR a.day_of_week IN (:daysOfWeek)) " +
+           "ORDER BY a.appointment_date DESC, a.start_time DESC",
+           countQuery = "SELECT COUNT(*) FROM appointments a WHERE a.user_id = :userId " +
+           "AND (:state IS NULL OR a.state = :state) " +
+           "AND (:fromDate IS NULL OR a.appointment_date >= :fromDate) " +
+           "AND (:toDate IS NULL OR a.appointment_date <= :toDate) " +
+           "AND (:daysOfWeekCount = 0 OR a.day_of_week IN (:daysOfWeek))",
+           nativeQuery = true)
+    Page<Appointment> findByUserIdWithFiltersOrderByDateDesc(
+            @Param("userId") Long userId,
+            @Param("state") String state,
+            @Param("fromDate") LocalDate fromDate,
+            @Param("toDate") LocalDate toDate,
+            @Param("daysOfWeek") java.util.List<Integer> daysOfWeek,
+            @Param("daysOfWeekCount") int daysOfWeekCount,
+            Pageable pageable);
+
+    /**
      * Busca turnos con filtros para administrador (todos los turnos).
      * 
      * @param state Estado opcional (null para todos)
@@ -311,6 +386,15 @@ public interface AppointmentRepository extends JpaRepository<Appointment, Long> 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT a FROM Appointment a WHERE a.id = :id")
     Optional<Appointment> findByIdWithPessimisticLock(@Param("id") Long id);
+
+    /**
+     * Busca el turno "siguiente" cuando un turno fue reprogramado.
+     * El turno RESCHEDULED es el anterior; el nuevo turno tiene previousAppointmentId apuntando al anterior.
+     * 
+     * @param previousAppointmentId ID del turno anterior (el que quedó en RESCHEDULED)
+     * @return El nuevo turno creado por la reprogramación
+     */
+    Optional<Appointment> findByPreviousAppointmentId(Long previousAppointmentId);
 
 }
 

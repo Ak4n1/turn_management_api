@@ -258,6 +258,7 @@ public interface AppointmentService {
             java.util.List<Integer> daysOfWeek,
             Boolean upcoming,
             Boolean past,
+            String sortOrder,
             int page,
             int size);
 

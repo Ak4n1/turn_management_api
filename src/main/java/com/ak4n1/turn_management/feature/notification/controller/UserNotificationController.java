@@ -14,9 +14,14 @@ import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.Page;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.format.annotation.DateTimeFormat;
+import org.springframework.format.annotation.DateTimeFormat.ISO;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -49,7 +54,7 @@ public class UserNotificationController {
     /**
      * Obtiene todas las notificaciones del usuario autenticado con filtros y paginación.
      * 
-     * GET /api/notifications?page=0&size=20&type=APPOINTMENT_CREATED&read=false&search=texto
+     * GET /api/notifications?page=0&size=20&type=APPOINTMENT_CREATED&read=false&search=texto&dateFrom=2026-02-01&dateTo=2026-02-10
      * 
      * Implementa US-N003.
      */
@@ -59,16 +64,21 @@ public class UserNotificationController {
             @RequestParam(defaultValue = "20") int size,
             @RequestParam(required = false) NotificationType type,
             @RequestParam(required = false) Boolean read,
+            @RequestParam(required = false) @DateTimeFormat(iso = ISO.DATE) LocalDate dateFrom,
+            @RequestParam(required = false) @DateTimeFormat(iso = ISO.DATE) LocalDate dateTo,
             @RequestParam(required = false) String search,
             HttpServletRequest httpRequest) {
         
-        logger.info("Solicitud para obtener notificaciones - page: {}, size: {}, type: {}, read: {}, search: {}", 
-            page, size, type, read, search);
+        logger.info("Solicitud para obtener notificaciones - page: {}, size: {}, type: {}, read: {}, dateFrom: {}, dateTo: {}, search: {}",
+            page, size, type, read, dateFrom, dateTo, search);
 
         Long userId = getCurrentUserId(httpRequest);
 
+        LocalDateTime dateFromLdt = dateFrom != null ? dateFrom.atStartOfDay() : null;
+        LocalDateTime dateToLdt = dateTo != null ? dateTo.atTime(LocalTime.MAX) : null;
+
         Page<SystemNotification> notificationPage = notificationService.getNotificationsWithFilters(
-            userId, type, read, search, page, size);
+            userId, type, read, dateFromLdt, dateToLdt, search, page, size);
         long unreadCount = notificationService.countUnreadNotifications(userId);
 
         List<SystemNotificationResponse> notificationResponses = notificationPage.getContent().stream()
@@ -91,13 +101,18 @@ public class UserNotificationController {
      * Obtiene el contador de notificaciones no leídas.
      * 
      * GET /api/notifications/unread-count
+     * GET /api/notifications/unread-count?excludeType=APPOINTMENT_CREATED  (para el badge de la campanita, sin contar "turno creado")
      * 
      * Implementa US-N003.
      */
     @GetMapping("/unread-count")
-    public ResponseEntity<Long> getUnreadCount(HttpServletRequest httpRequest) {
+    public ResponseEntity<Long> getUnreadCount(
+            @RequestParam(required = false) NotificationType excludeType,
+            HttpServletRequest httpRequest) {
         Long userId = getCurrentUserId(httpRequest);
-        long unreadCount = notificationService.countUnreadNotifications(userId);
+        long unreadCount = excludeType != null
+            ? notificationService.countUnreadNotificationsExcludingType(userId, excludeType)
+            : notificationService.countUnreadNotifications(userId);
         return ResponseEntity.ok(unreadCount);
     }
 

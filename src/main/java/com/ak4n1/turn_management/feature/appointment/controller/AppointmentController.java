@@ -350,6 +350,7 @@ public class AppointmentController {
      * @param daysOfWeek Filtro opcional por días de la semana (formato: 1,2,3 donde 1=Lunes, 7=Domingo)
      * @param upcoming Filtro opcional para solo turnos futuros (boolean, mutuamente excluyente con past)
      * @param past Filtro opcional para solo turnos pasados (boolean, mutuamente excluyente con upcoming)
+     * @param sortOrder Orden por fecha: "asc" = próximos primero (default), "desc" = recientes primero
      * @param page Número de página (default: 0)
      * @param size Tamaño de página (default: 20, máximo: 100)
      * @param httpRequest HttpServletRequest para obtener userId del token JWT
@@ -364,14 +365,15 @@ public class AppointmentController {
             @RequestParam(required = false) String daysOfWeek,
             @RequestParam(required = false) Boolean upcoming,
             @RequestParam(required = false) Boolean past,
+            @RequestParam(required = false) String sortOrder,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size,
             HttpServletRequest httpRequest) {
         
         Long userId = getCurrentUserId(httpRequest);
 
-        logger.info("Consultando turnos del usuario - ID: {}, Estado: {}, Desde: {}, Hasta: {}, Días: {}, Upcoming: {}, Past: {}, Página: {}, Tamaño: {}",
-            userId, status, fromDate, toDate, daysOfWeek, upcoming, past, page, size);
+        logger.info("Consultando turnos del usuario - ID: {}, Estado: {}, Desde: {}, Hasta: {}, Días: {}, Upcoming: {}, Past: {}, SortOrder: {}, Página: {}, Tamaño: {}",
+            userId, status, fromDate, toDate, daysOfWeek, upcoming, past, sortOrder, page, size);
 
         // Parsear estado si se proporcionó
         AppointmentState appointmentState = null;
@@ -432,7 +434,7 @@ public class AppointmentController {
 
         // Llamar al servicio
         MyAppointmentsResponse response = appointmentService.getMyAppointments(
-            userId, appointmentState, fromDateParsed, toDateParsed, daysOfWeekList, upcoming, past, page, size);
+            userId, appointmentState, fromDateParsed, toDateParsed, daysOfWeekList, upcoming, past, sortOrder, page, size);
 
         logger.info("Turnos encontrados - Total: {}, Página: {}, Tamaño: {}, Total páginas: {}",
             response.getTotal(), response.getPage(), response.getSize(), response.getTotalPages());
